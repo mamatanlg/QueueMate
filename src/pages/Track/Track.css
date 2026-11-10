@@ -1,0 +1,144 @@
+.trk {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow-y: auto;
+}
+
+.trk-bg {
+  position: fixed; inset: 0; z-index: 0;
+  background: var(--bg);
+}
+
+.trk-back {
+  position: fixed; top: 20px; left: 20px; z-index: 10;
+  width: 36px; height: 36px; border-radius: 10px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--gray-2); transition: color 0.15s;
+}
+.trk-back:hover { color: var(--white); }
+
+.trk-content {
+  position: relative; z-index: 1;
+  text-align: center; padding: 32px 24px;
+  width: 100%; max-width: 400px;
+}
+
+.trk-title { font-size: 28px; font-weight: 800; letter-spacing: -0.03em; }
+.trk-sub { font-size: 16px; color: var(--gray-2); margin-top: 4px; margin-bottom: 28px; }
+
+.trk-form { display: flex; gap: 8px; margin-bottom: 32px; }
+.trk-input {
+  flex: 1; padding: 12px 16px; border-radius: 12px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  color: var(--white); font-size: 16px; font-family: var(--font-mono);
+  font-weight: 600; outline: none; transition: border-color 0.15s;
+  -moz-appearance: textfield;
+}
+.trk-input::-webkit-inner-spin-button { display: none; }
+.trk-input:focus { border-color: var(--blue); }
+.trk-input::placeholder { color: var(--gray-3); font-family: var(--font); font-weight: 400; }
+.trk-submit {
+  padding: 12px 20px; border-radius: 12px;
+  background: var(--blue); color: #fff; font-size: 14px; font-weight: 600;
+}
+.trk-submit:disabled { opacity: 0.4; }
+
+/* Result */
+.trk-result { margin-top: 8px; }
+.trk-notfound { font-size: 14px; color: var(--gray-2); padding: 20px; }
+
+.trk-status {
+  padding: 28px 20px; border-radius: 16px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+}
+
+.trk-status h2 { font-size: 18px; font-weight: 700; margin-top: 12px; }
+.trk-status .ar { font-size: 14px; color: var(--gray-2); margin-top: 4px; }
+
+.trk-status-icon {
+  width: 48px; height: 48px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 800; margin: 0 auto;
+}
+
+.trk-status--served .trk-status-icon { background: var(--green-dim); color: var(--green); }
+.trk-status--serving .trk-status-icon { background: var(--blue-dim); color: var(--blue); }
+.trk-status--skipped .trk-status-icon { background: var(--red-dim); color: var(--red); }
+
+.trk-status-icon--pulse { animation: iconPulse 1.5s ease-in-out infinite; }
+@keyframes iconPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+}
+
+.trk-counter { font-size: 13px; color: var(--gray-2); margin-top: 8px; }
+
+/* Waiting */
+.trk-pos-num {
+  font-family: var(--font-mono); font-weight: 800; font-size: 64px;
+  color: var(--white); line-height: 1;
+}
+.trk-pos-label {
+  font-size: 12px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--gray-2); margin-top: 4px;
+}
+
+.trk-wait-grid {
+  display: flex; align-items: center; justify-content: center; gap: 24px;
+  margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border);
+}
+.trk-wait-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.trk-wait-val {
+  font-family: var(--font-mono); font-weight: 700; font-size: 18px; color: var(--white);
+}
+.trk-wait-label { font-size: 10px; color: var(--gray-3); text-transform: uppercase; letter-spacing: 0.08em; }
+.trk-wait-sep { width: 1px; height: 28px; background: var(--border); }
+
+.trk-auto { font-size: 10px; color: var(--gray-3); margin-top: 16px; }
+
+/* Stages progress */
+.trk-stages {
+  margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border);
+  text-align: left;
+}
+.trk-stages-label {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.1em; color: var(--gray-2); margin-bottom: 12px; text-align: center;
+}
+.trk-stages-list {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.trk-stage {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 8px;
+  background: var(--bg-subtle); border: 1px solid var(--border);
+  transition: all 0.2s;
+}
+.trk-stage-dot {
+  width: 24px; height: 24px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  font-family: var(--font-mono); font-weight: 700; font-size: 12px;
+  color: var(--gray-3); flex-shrink: 0;
+}
+.trk-stage-name { font-size: 13px; font-weight: 500; color: var(--gray-2); }
+.trk-stage--done .trk-stage-dot {
+  background: var(--green); border-color: var(--green); color: #fff;
+}
+.trk-stage--done .trk-stage-name { color: var(--gray-2); text-decoration: line-through; opacity: 0.6; }
+.trk-stage--current {
+  background: var(--blue-dim); border-color: rgba(79,143,247,0.3);
+  animation: trkPulse 2s ease-in-out infinite;
+}
+.trk-stage--current .trk-stage-dot {
+  background: var(--blue); border-color: var(--blue); color: #fff;
+}
+.trk-stage--current .trk-stage-name { color: var(--white); font-weight: 700; }
+@keyframes trkPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79,143,247,0); }
+  50% { box-shadow: 0 0 0 4px rgba(79,143,247,0.1); }
+}
