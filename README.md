@@ -1,20 +1,82 @@
 <div align="center">
 
-# Queue System
+# QueueMate
 
-**A modern, real-time queue management system built for businesses of any size.**
+**Web-Based Real-Time Queue Monitoring and Notification System**
 
-Manage walk-in customers with multi-counter support, bilingual voice announcements, live displays, printed tickets with QR tracking, analytics dashboards, and 23 display layouts.
-
-[![Built with React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev)
-[![Socket.IO](https://img.shields.io/badge/Socket.IO-4-010101?logo=socket.io&logoColor=white)](https://socket.io)
-[![Express](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)](https://expressjs.com)
-[![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)](https://vite.dev)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+For the Business Office of San Isidro College, Malaybalay City, Bukidnon.
 
 </div>
 
 ---
+
+## Target architecture
+
+QueueMate has three client applications, one backend, and one shared PostgreSQL database. The backend is the source of truth for queue numbering, assignment, status transitions, and notifications; client applications must not implement independent queue logic.
+
+```text
+Cashier web (Next.js) ─┐
+Public TV (Next.js) ───┼── HTTPS / Socket.IO ── Node.js + Express backend ── PostgreSQL
+Mobile app (Expo) ─────┘
+```
+
+| Component | Planned technology | Responsibility |
+|-----------|--------------------|----------------|
+| `cashier-web/` | Next.js, JavaScript | Authenticated cashier interface; operates only the cashier's assigned window |
+| `public-display/` | Next.js, JavaScript | Public TV display for all four windows, latest issued number, and QR code |
+| `mobile-app/` | Expo / React Native, JavaScript | QR scanning, transaction selection, ticket display, queue tracking, sound and vibration alerts |
+| `backend/` | Node.js, Express, Socket.IO | Authentication, queue rules, API, and real-time updates |
+| `database/` | PostgreSQL schema and migrations | Persistent shared queue and application data |
+| `docs/` | Project documentation | Architecture and implementation notes |
+
+The repository already contains a root-level Vite/React and Express application (`src/`, `server/`, and root package files). Those files are preserved as legacy material; the new applications will be developed in the folders above. The existing root application does not define the target architecture.
+
+### Queue rules the backend must enforce
+
+- Issue one global, sequential queue; issuing a number does not assign it to a window.
+- Keep all issued customers in one shared waiting queue, including when all four windows are unavailable.
+- Keep the cashier assignments fixed: Cashier 1 → Window 1, Cashier 2 → Window 2, Cashier 3 → Window 3, and Cashier 4 → Window 4. Each cashier can operate only their assigned window.
+- When a cashier calls next, the backend assigns the oldest waiting number to that cashier's window. The operation must be atomic so two cashiers cannot call the same number or skip an older waiting number.
+- An unavailable window cannot receive a new assignment. When it becomes available, its cashier may call the next waiting number.
+- For ticket 010, calling 005 triggers the approaching alert; calling 010 triggers the called alert with the assigned window. Trigger each alert once per ticket, using sound and vibration when supported and permitted.
+- Students and parents do not need accounts. Cashier and administrator functions require authentication.
+- On mobile, show the customer's number and status plus all four current serving numbers. Do not show an assigned window until that customer's ticket has been called.
+
+### Device access and deployment
+
+All clients use the same backend address. During local development, a device must use the development computer's LAN IP (and the backend must listen on a network interface reachable from the LAN); `localhost` on a phone or TV refers to that device, not the developer's computer. In production, clients use the deployed public HTTPS address, with Socket.IO over the secure connection.
+
+This is an independent prototype: it does not connect to the school's existing queue system and does not process payments or generate official SOAs.
+
+## Project structure
+
+```text
+QueueMate/
+  backend/
+  cashier-web/
+  public-display/
+  mobile-app/
+  database/
+  docs/
+  README.md
+  .gitignore
+  # Preserved legacy files: src/, server/, public/, package.json, and others
+```
+
+## Development roadmap
+
+1. **Backend and database foundation:** Define the PostgreSQL schema, four fixed cashier assignments, authentication boundary, queue state transitions, and atomic sequential issue/call operations.
+2. **Queue API and real-time events:** Implement backend endpoints and Socket.IO updates; verify concurrent calls, oldest-first behavior, unavailable windows, and once-per-ticket alerts.
+3. **Cashier web:** Build authenticated cashier sign-in and assigned-window queue controls against the shared backend.
+4. **Public display:** Build the TV view for all four windows, latest issued number, statuses, and public QR code.
+5. **Mobile app:** Build QR scanning, transaction selection, ticket tracking, and permitted sound/vibration alerts.
+6. **Integration and deployment:** Test all clients against the same backend/database, validate LAN development access, then configure the public HTTPS deployment.
+
+Do not install packages or initialize these applications until the setup plan is approved. No new application code has been added as part of this structure preparation.
+
+## Legacy application reference
+
+The following sections describe the pre-existing Vite/React queue application retained in this repository. They are historical reference only and are not instructions for setting up the QueueMate target architecture above.
 
 ## Features
 
