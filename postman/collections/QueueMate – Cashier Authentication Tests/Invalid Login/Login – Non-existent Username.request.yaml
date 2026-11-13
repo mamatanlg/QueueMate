@@ -1,0 +1,31 @@
+$kind: http-request
+name: 'Login – Non-existent Username'
+method: POST
+url: '{{base_url}}/api/v1/auth/login'
+order: 2000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "username": "does_not_exist",
+      "password": "{{password}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test("Status is 401 Unauthorized for non-existent username", function () {
+          pm.response.to.have.status(401);
+      });
+
+      pm.test("Response body does not contain accessToken", function () {
+          const json = pm.response.json();
+          pm.expect(json).to.not.have.property("accessToken");
+      });
+
+      pm.test("Content-Type is application/json", function () {
+          pm.expect(pm.response.headers.get("Content-Type")).to.include("application/json");
+      });

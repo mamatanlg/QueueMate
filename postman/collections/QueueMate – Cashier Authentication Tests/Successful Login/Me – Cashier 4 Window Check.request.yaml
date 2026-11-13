@@ -1,0 +1,38 @@
+$kind: http-request
+name: 'Me – Cashier 4 Window Check'
+method: GET
+url: '{{base_url}}/api/v1/cashier/me'
+order: 4500
+headers:
+  - key: Authorization
+    value: 'Bearer {{token}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test("Status is 200 OK", function () {
+          pm.response.to.have.status(200);
+      });
+
+      pm.test("Response is JSON", function () {
+          pm.response.to.be.json;
+      });
+
+      pm.test("Window number is 4", function () {
+          const json = pm.response.json();
+          pm.expect(json).to.have.property("number");
+          pm.expect(json.number).to.eql(4);
+      });
+
+      pm.test("Window name is 'Window 4'", function () {
+          const json = pm.response.json();
+          pm.expect(json).to.have.property("name");
+          pm.expect(json.name).to.eql("Window 4");
+      });
+
+      pm.test("Content-Type is application/json", function () {
+          pm.expect(pm.response.headers.get("Content-Type")).to.include("application/json");
+      });
+
+      // Clear token after window check – JWT must not persist beyond its paired login.
+      pm.collectionVariables.set("token", "");

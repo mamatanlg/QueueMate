@@ -1,0 +1,29 @@
+$kind: http-request
+name: '3 – Logout'
+method: POST
+url: '{{base_url}}/api/v1/auth/logout'
+order: 3000
+headers:
+  - key: Authorization
+    value: 'Bearer {{token}}'
+  - key: Content-Type
+    value: application/json
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      // Logout semantics: the server acknowledges the request with a 2xx response.
+      // The backend uses stateless JWTs — no server-side token blocklist is maintained.
+      // Token invalidation is client-side only (token variable cleared in next step).
+      pm.test("Logout returns a 2xx success response", function () {
+          pm.expect(pm.response.code).to.be.within(200, 299);
+      });
+
+      pm.test("Response is JSON", function () {
+          pm.response.to.be.json;
+      });
+
+      pm.test("Response does not issue a new token", function () {
+          const json = pm.response.json();
+          pm.expect(json).to.not.have.property("accessToken");
+      });

@@ -1,0 +1,23 @@
+$kind: collection
+name: Invalid Login
+description: |-
+  Verifies that the login endpoint rejects bad credentials with the correct HTTP status codes.
+  Cases covered:
+  - Incorrect password → 401
+  - Non-existent username → 401
+  - Empty username → 400
+  - Empty password → 400
+
+  These four requests count toward the 10-login-per-15-min rate limit budget.
+  They do not set or touch the `token` collection variable.
+  The 429 guard (`rate_limited` flag) is checked in each request's beforeRequest script
+  so that if the Successful Login folder already exhausted the quota, these are skipped too.
+order: 2000
+scripts:
+  - type: http:beforeRequest
+    language: text/javascript
+    code: |-
+      // 429 guard: skip this invalid-login test if the rate limit was already hit.
+      if (pm.collectionVariables.get("rate_limited") === "true") {
+          pm.execution.skipRequest();
+      }
