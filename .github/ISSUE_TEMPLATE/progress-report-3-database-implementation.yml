@@ -1,0 +1,241 @@
+name: "Progress Report 3 - Database Creation and Implementation"
+description: "Submit Progress Report 3: the actual database created in your chosen DBMS."
+title: "[Progress Report 3] Database Implementation - "
+labels:
+  - progress-report
+  - implementation
+  - needs-review
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Progress Report 3
+
+        **Objective:** Implement the designed database using the group's chosen Database Management System.
+
+        **Before you submit, read this:**
+        - GitHub Issues are the *official submission*. Notion holds the *detailed documentation*. Your GitHub repository holds the *actual work*.
+        - Report only work that is **already done**. Planned work goes under "Next Activities".
+        - Every member must appear in the contribution table, and the commits must show who did what.
+        - Be ready to demonstrate your work to the instructor.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Required activities
+
+        1. Create the actual database.
+        2. Create all required database tables.
+        3. Implement Primary Keys.
+        4. Implement Foreign Keys.
+        5. Implement relationships between tables.
+        6. Configure appropriate NOT NULL constraints.
+        7. Configure UNIQUE constraints.
+        8. Configure CHECK constraints, where supported.
+        9. Configure DEFAULT constraints.
+        10. Execute SQL scripts.
+        11. Insert initial sample records.
+        12. Verify that the tables and relationships work correctly.
+        13. Test valid and invalid data insertion.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Required Notion documentation
+
+        1. Database management system selected.
+        2. Database creation documentation.
+        3. Table structures and descriptions.
+        4. Screenshots of the created database.
+        5. Sample records.
+        6. Explanation of implemented constraints.
+        7. Database testing results.
+        8. Problems encountered and solutions.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Required GitHub evidence
+
+        1. CREATE DATABASE scripts, where applicable.
+        2. CREATE TABLE scripts.
+        3. INSERT scripts or seed files.
+        4. Database schema or migration files.
+        5. Relevant GitHub commits.
+        6. Screenshots of successful and failed database operations.
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        ## Report details
+
+  - type: input
+    id: project_title
+    attributes:
+      label: "Project Title"
+      description: "The name of your proposed information system."
+      placeholder: "e.g., Barangay Health Records System"
+    validations:
+      required: true
+
+  - type: input
+    id: group_name
+    attributes:
+      label: "Group Name"
+      description: "Your official group name or number."
+      placeholder: "e.g., Group 3 - BSIT 2A"
+    validations:
+      required: true
+
+  - type: input
+    id: reporting_date
+    attributes:
+      label: "Reporting Date"
+      description: "Date you are submitting this report (YYYY-MM-DD)."
+      placeholder: "2026-11-20"
+    validations:
+      required: true
+
+  - type: input
+    id: group_leader
+    attributes:
+      label: "Group Leader"
+      description: "Full name of your group leader."
+      placeholder: "e.g., Juan Dela Cruz"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: dbms_used
+    attributes:
+      label: "DBMS Used"
+      description: "Pick the database management system you implemented. If yours is not listed, choose the last option and name it under Technical Implementation Details (it must be approved by the instructor)."
+      options:
+        - "MySQL"
+        - "PostgreSQL"
+        - "Microsoft SQL Server"
+        - "MariaDB"
+        - "SQLite"
+        - "Other approved DBMS (name it under Technical Implementation Details)"
+    validations:
+      required: true
+
+  - type: input
+    id: notion_url
+    attributes:
+      label: "Notion Documentation URL"
+      description: "Link to your group's ONE Notion project documentation page. Make sure the page is shared so the instructor can open it."
+      placeholder: "https://www.notion.so/..."
+    validations:
+      required: true
+
+  - type: input
+    id: repo_url
+    attributes:
+      label: "GitHub Repository URL"
+      description: "Link to your group's ONE GitHub repository."
+      placeholder: "https://github.com/your-group/your-repo"
+    validations:
+      required: true
+
+  - type: textarea
+    id: activities_completed
+    attributes:
+      label: "Activities Completed"
+      description: "Which of the required activities above did your group finish? Describe what was actually done."
+      placeholder: "e.g., Created the database and 11 tables, added PK/FK/UNIQUE/CHECK/DEFAULT constraints, inserted sample data, tested invalid inserts..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: technical_implementation
+    attributes:
+      label: "Technical Implementation Details"
+      description: "Describe how you implemented the database: DBMS version, tools used, how scripts are run, constraints implemented, and the results of your valid and invalid data tests."
+      placeholder: "e.g., PostgreSQL 16, pgAdmin; schema.sql creates 11 tables; CHECK on price >= 0..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: member_contributions
+    attributes:
+      label: "Individual Member Contributions"
+      description: "List EVERY member of your group. Add or delete rows so the table matches your group size. Write what each member ACTUALLY did, and give a commit link or file name as evidence. Do not list planned work here."
+      value: |
+        | Member Name | Assigned Task | Actual Accomplishment | Evidence/Commit |
+        |---|---|---|---|
+        | Member 1 | | | |
+        | Member 2 | | | |
+        | Member 3 | | | |
+        | Member 4 | | | |
+    validations:
+      required: true
+
+  - type: textarea
+    id: sql_scripts
+    attributes:
+      label: "SQL Scripts Implemented"
+      description: "Paste your key SQL here (CREATE DATABASE, CREATE TABLE, constraints, sample INSERTs) and name the files in your repository that contain the full scripts."
+      placeholder: "-- Example\nCREATE TABLE ..."
+      render: sql
+    validations:
+      required: true
+
+  - type: textarea
+    id: problems
+    attributes:
+      label: "Problems Encountered"
+      description: 'Technical or teamwork problems you ran into during this milestone. Write "None" only if there truly were none.'
+      placeholder: "Describe each problem briefly."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solutions
+    attributes:
+      label: "Solutions Implemented"
+      description: "How you solved each problem above (or what you still need help with)."
+      placeholder: "Describe each solution briefly."
+    validations:
+      required: true
+
+  - type: textarea
+    id: next_activities
+    attributes:
+      label: "Next Activities"
+      description: "What your group will do next. This is the only place for PLANNED work."
+      placeholder: "List the next tasks and who will do them."
+    validations:
+      required: true
+
+  - type: textarea
+    id: commit_links
+    attributes:
+      label: "GitHub Commit Links"
+      description: "Links to the commits that show this milestone's work, ideally from different members. One link per line."
+      placeholder: "https://github.com/your-group/your-repo/commit/..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_evidence
+    attributes:
+      label: "Additional Evidence"
+      description: "Drag and drop screenshots here, or paste other links (ERD exports, files, recordings)."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: project_status
+    attributes:
+      label: "Current Project Status"
+      description: "Where your group stands on THIS milestone."
+      options:
+        - "In Progress"
+        - "Completed - Ready for Instructor Review"
+        - "Delayed - Need Guidance"
+        - "Revised - Resubmitted After Feedback"
+    validations:
+      required: true

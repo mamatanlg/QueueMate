@@ -1,0 +1,219 @@
+name: "Progress Report 2 - Database Design and Normalization"
+description: "Submit Progress Report 2: relational tables and normalization (1NF, 2NF, 3NF)."
+title: "[Progress Report 2] Database Design - "
+labels:
+  - progress-report
+  - database-design
+  - normalization
+  - needs-review
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Progress Report 2
+
+        **Objective:** Convert the ERD into a proper relational database structure and apply normalization to minimize data redundancy and maintain data integrity.
+
+        **Before you submit, read this:**
+        - GitHub Issues are the *official submission*. Notion holds the *detailed documentation*. Your GitHub repository holds the *actual work*.
+        - Report only work that is **already done**. Planned work goes under "Next Activities".
+        - Every member must appear in the contribution table, and the commits must show who did what.
+        - Be ready to demonstrate your work to the instructor.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Required activities
+
+        1. Convert the ERD into relational database tables.
+        2. Identify Primary Keys and Foreign Keys.
+        3. Apply First Normal Form (1NF).
+        4. Apply Second Normal Form (2NF).
+        5. Apply Third Normal Form (3NF).
+        6. Identify and resolve unnecessary data redundancy.
+        7. Define appropriate data types for each attribute.
+        8. Identify appropriate database constraints.
+        9. Review table relationships and database structure.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Required Notion documentation
+
+        1. List of finalized database tables.
+        2. Table structures with attributes and data types.
+        3. Primary Key and Foreign Key identification.
+        4. Explanation of 1NF.
+        5. Explanation of 2NF.
+        6. Explanation of 3NF.
+        7. Before-and-after normalization examples, where applicable.
+        8. Updated ERD reflecting the finalized database design.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Required GitHub evidence
+
+        1. Relevant commits.
+        2. SQL scripts, if database development has started.
+        3. Supporting database design files.
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        ## Report details
+
+  - type: input
+    id: project_title
+    attributes:
+      label: "Project Title"
+      description: "The name of your proposed information system."
+      placeholder: "e.g., Barangay Health Records System"
+    validations:
+      required: true
+
+  - type: input
+    id: group_name
+    attributes:
+      label: "Group Name"
+      description: "Your official group name or number."
+      placeholder: "e.g., Group 3 - BSIT 2A"
+    validations:
+      required: true
+
+  - type: input
+    id: reporting_date
+    attributes:
+      label: "Reporting Date"
+      description: "Date you are submitting this report (YYYY-MM-DD)."
+      placeholder: "2026-11-20"
+    validations:
+      required: true
+
+  - type: input
+    id: group_leader
+    attributes:
+      label: "Group Leader"
+      description: "Full name of your group leader."
+      placeholder: "e.g., Juan Dela Cruz"
+    validations:
+      required: true
+
+  - type: input
+    id: notion_url
+    attributes:
+      label: "Notion Documentation URL"
+      description: "Link to your group's ONE Notion project documentation page. Make sure the page is shared so the instructor can open it."
+      placeholder: "https://www.notion.so/..."
+    validations:
+      required: true
+
+  - type: input
+    id: repo_url
+    attributes:
+      label: "GitHub Repository URL"
+      description: "Link to your group's ONE GitHub repository."
+      placeholder: "https://github.com/your-group/your-repo"
+    validations:
+      required: true
+
+  - type: textarea
+    id: activities_completed
+    attributes:
+      label: "Activities Completed"
+      description: "Which of the required activities above did your group finish? Describe what was actually done."
+      placeholder: "e.g., Converted 9 entities into 11 tables, resolved 2 M:N relationships with junction tables..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: technical_progress
+    attributes:
+      label: "Technical Progress"
+      description: "Summarize the technical result: final table list, keys, data types, and how the design changed from your ERD."
+      placeholder: "e.g., 11 tables, all in 3NF, 14 foreign keys..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: member_contributions
+    attributes:
+      label: "Individual Member Contributions"
+      description: "List EVERY member of your group. Add or delete rows so the table matches your group size. Write what each member ACTUALLY did, and give a commit link or file name as evidence. Do not list planned work here."
+      value: |
+        | Member Name | Assigned Task | Actual Accomplishment | Evidence/Commit |
+        |---|---|---|---|
+        | Member 1 | | | |
+        | Member 2 | | | |
+        | Member 3 | | | |
+        | Member 4 | | | |
+    validations:
+      required: true
+
+  - type: textarea
+    id: normalization_activities
+    attributes:
+      label: "Normalization Activities Completed"
+      description: "Explain what you did for 1NF, 2NF and 3NF, with at least one before-and-after example (the table or column that was changed and why)."
+      placeholder: "1NF: ...\n2NF: ...\n3NF: ...\nBefore/after example: ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: problems
+    attributes:
+      label: "Problems Encountered"
+      description: 'Technical or teamwork problems you ran into during this milestone. Write "None" only if there truly were none.'
+      placeholder: "Describe each problem briefly."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solutions
+    attributes:
+      label: "Solutions Implemented"
+      description: "How you solved each problem above (or what you still need help with)."
+      placeholder: "Describe each solution briefly."
+    validations:
+      required: true
+
+  - type: textarea
+    id: next_activities
+    attributes:
+      label: "Next Activities"
+      description: "What your group will do next. This is the only place for PLANNED work."
+      placeholder: "List the next tasks and who will do them."
+    validations:
+      required: true
+
+  - type: textarea
+    id: commit_links
+    attributes:
+      label: "GitHub Commit Links"
+      description: "Links to the commits that show this milestone's work, ideally from different members. One link per line."
+      placeholder: "https://github.com/your-group/your-repo/commit/..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_evidence
+    attributes:
+      label: "Additional Evidence"
+      description: "Drag and drop screenshots here, or paste other links (ERD exports, files, recordings)."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: project_status
+    attributes:
+      label: "Current Project Status"
+      description: "Where your group stands on THIS milestone."
+      options:
+        - "In Progress"
+        - "Completed - Ready for Instructor Review"
+        - "Delayed - Need Guidance"
+        - "Revised - Resubmitted After Feedback"
+    validations:
+      required: true

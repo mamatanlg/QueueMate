@@ -1,0 +1,205 @@
+name: "Progress Report 1 - Entity Relationship Diagram (ERD)"
+description: "Submit Progress Report 1: the Entity Relationship Diagram of your proposed system."
+title: "[Progress Report 1] ERD - "
+labels:
+  - progress-report
+  - database-design
+  - needs-review
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Progress Report 1
+
+        **Objective:** Develop the Entity Relationship Diagram of the proposed system and identify the relationships between database entities.
+
+        **Before you submit, read this:**
+        - GitHub Issues are the *official submission*. Notion holds the *detailed documentation*. Your GitHub repository holds the *actual work*.
+        - Report only work that is **already done**. Planned work goes under "Next Activities".
+        - Every member must appear in the contribution table, and the commits must show who did what.
+        - Be ready to demonstrate your work to the instructor.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Required activities
+
+        1. Identify all entities needed in the proposed system.
+        2. Identify the attributes of each entity.
+        3. Assign Primary Keys (PK).
+        4. Identify Foreign Keys (FK), where applicable.
+        5. Establish relationships between entities.
+        6. Identify relationship cardinalities (1:1, 1:M, M:N).
+        7. Create the complete Entity Relationship Diagram.
+        8. Review the ERD and verify that it supports the system's requirements.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Required Notion documentation
+
+        1. Complete ERD diagram.
+        2. List of entities and their attributes.
+        3. Description and purpose of each entity.
+        4. Explanation of relationships between entities.
+        5. Identification of primary and foreign keys.
+        6. Explanation of cardinalities.
+
+  - type: markdown
+    attributes:
+      value: |
+        ### Required GitHub evidence
+
+        1. Relevant GitHub commits.
+        2. Supporting documentation or ERD exports, if available.
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+
+        ## Report details
+
+  - type: input
+    id: project_title
+    attributes:
+      label: "Project Title"
+      description: "The name of your proposed information system."
+      placeholder: "e.g., Barangay Health Records System"
+    validations:
+      required: true
+
+  - type: input
+    id: group_name
+    attributes:
+      label: "Group Name"
+      description: "Your official group name or number."
+      placeholder: "e.g., Group 3 - BSIT 2A"
+    validations:
+      required: true
+
+  - type: input
+    id: reporting_date
+    attributes:
+      label: "Reporting Date"
+      description: "Date you are submitting this report (YYYY-MM-DD)."
+      placeholder: "2026-11-20"
+    validations:
+      required: true
+
+  - type: input
+    id: group_leader
+    attributes:
+      label: "Group Leader"
+      description: "Full name of your group leader."
+      placeholder: "e.g., Juan Dela Cruz"
+    validations:
+      required: true
+
+  - type: input
+    id: notion_url
+    attributes:
+      label: "Notion Documentation URL"
+      description: "Link to your group's ONE Notion project documentation page. Make sure the page is shared so the instructor can open it."
+      placeholder: "https://www.notion.so/..."
+    validations:
+      required: true
+
+  - type: input
+    id: repo_url
+    attributes:
+      label: "GitHub Repository URL"
+      description: "Link to your group's ONE GitHub repository."
+      placeholder: "https://github.com/your-group/your-repo"
+    validations:
+      required: true
+
+  - type: textarea
+    id: activities_completed
+    attributes:
+      label: "Activities Completed"
+      description: "Which of the required activities above did your group finish? Describe what was actually done."
+      placeholder: "e.g., Identified 9 entities, assigned PKs and FKs, drew the ERD in draw.io..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: technical_progress
+    attributes:
+      label: "Technical Progress"
+      description: "Summarize the technical result: number of entities, key relationships, cardinalities, and how the ERD supports your system's requirements."
+      placeholder: "e.g., 9 entities, 11 relationships (7 1:M, 2 M:N, 2 1:1)..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: member_contributions
+    attributes:
+      label: "Individual Member Contributions"
+      description: "List EVERY member of your group. Add or delete rows so the table matches your group size. Write what each member ACTUALLY did, and give a commit link or file name as evidence. Do not list planned work here."
+      value: |
+        | Member Name | Assigned Task | Actual Accomplishment | Evidence/Commit |
+        |---|---|---|---|
+        | Member 1 | | | |
+        | Member 2 | | | |
+        | Member 3 | | | |
+        | Member 4 | | | |
+    validations:
+      required: true
+
+  - type: textarea
+    id: problems
+    attributes:
+      label: "Problems Encountered"
+      description: 'Technical or teamwork problems you ran into during this milestone. Write "None" only if there truly were none.'
+      placeholder: "Describe each problem briefly."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solutions
+    attributes:
+      label: "Solutions Implemented"
+      description: "How you solved each problem above (or what you still need help with)."
+      placeholder: "Describe each solution briefly."
+    validations:
+      required: true
+
+  - type: textarea
+    id: next_activities
+    attributes:
+      label: "Next Activities"
+      description: "What your group will do next. This is the only place for PLANNED work."
+      placeholder: "List the next tasks and who will do them."
+    validations:
+      required: true
+
+  - type: textarea
+    id: commit_links
+    attributes:
+      label: "GitHub Commit Links"
+      description: "Links to the commits that show this milestone's work, ideally from different members. One link per line."
+      placeholder: "https://github.com/your-group/your-repo/commit/..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_evidence
+    attributes:
+      label: "Additional Evidence"
+      description: "Drag and drop screenshots here, or paste other links (ERD exports, files, recordings)."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: project_status
+    attributes:
+      label: "Current Project Status"
+      description: "Where your group stands on THIS milestone."
+      options:
+        - "In Progress"
+        - "Completed - Ready for Instructor Review"
+        - "Delayed - Need Guidance"
+        - "Revised - Resubmitted After Feedback"
+    validations:
+      required: true
