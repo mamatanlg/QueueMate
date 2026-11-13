@@ -1,0 +1,41 @@
+$kind: collection
+description: |-
+  Authentication test suite for the QueueMate Cashier API.
+
+  ## Auth Behavior (verified via live inspection)
+  - Login endpoint returns a JWT `accessToken` in the response body (not a cookie).
+  - All protected endpoints require `Authorization: Bearer <token>` header.
+  - Token is captured into the `token` collection variable after a successful login and
+    cleared immediately after the matching GET /api/v1/cashier/me check. It is never
+    logged or printed.
+  - Logout endpoint accepts a Bearer token; the server acknowledges the request but
+    does NOT perform server-side token invalidation (stateless JWT). The client is
+    responsible for discarding the token.
+
+  ## Endpoints
+  | Method | Path | Auth |
+  |--------|------|------|
+  | POST | /api/v1/auth/login | — |
+  | GET  | /api/v1/cashier/me | Bearer |
+  | POST | /api/v1/auth/logout | Bearer |
+
+  ## Rate-limit budget
+  Limit: 10 login requests per 15-minute window.
+  This collection sends exactly 9 login requests per run:
+    - 4 successful logins (Successful Login folder)
+    - 4 invalid-credential tests (Invalid Login folder)
+    - 1 session lifecycle login (Session Management folder)
+  A 100-second delay is injected before each of the 2nd, 3rd, and 4th successful logins
+  (cashiers 2–4). Expected total runtime: ~7–8 minutes.
+
+  ## 429 guard
+  The `rate_limited` collection variable is set to "true" on the first HTTP 429 response
+  (via the Successful Login folder-level afterResponse script). Every subsequent login
+  request checks this flag in its beforeRequest script and calls
+  pm.execution.skipRequest() to skip without retrying.
+
+variables:
+  base_url: http://localhost:4000
+  token: ""
+  password: ""
+  rate_limited: "false"

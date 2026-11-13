@@ -1,0 +1,21 @@
+$kind: http-request
+name: '4 – Clear Token (Client-side Invalidation)'
+method: GET
+url: '{{base_url}}/api/v1/cashier/me'
+order: 4000
+headers:
+  - key: Authorization
+    value: 'Bearer {{token}}'
+scripts:
+  - type: beforeRequest
+    language: text/javascript
+    code: |-
+      // Simulate client-side token discard after logout.
+      // The JWT backend does not maintain a blocklist, so invalidation is client-side only.
+      pm.collectionVariables.set("token", "");
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test("Token variable is now empty (client-side cleared)", function () {
+          pm.expect(pm.collectionVariables.get("token")).to.equal("");
+      });

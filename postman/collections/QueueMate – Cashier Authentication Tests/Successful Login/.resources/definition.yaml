@@ -1,0 +1,41 @@
+$kind: collection
+name: Successful Login
+description: |-
+  Verifies that each of the four cashier accounts can log in successfully and that
+  GET /api/v1/cashier/me immediately returns the correct window assignment for that token.
+
+  ## Execution order (collection-run sequential)
+  1. Login Cashier 1 → Me – Cashier 1 Window Check
+  2. Login Cashier 2 → Me – Cashier 2 Window Check
+  3. Login Cashier 3 → Me – Cashier 3 Window Check
+  4. Login Cashier 4 → Me – Cashier 4 Window Check
+
+  ## Rate-limit budget & timing
+  Rate limit: 10 login requests per 15-minute window.
+  This folder sends 4 successful logins. Combined with 4 invalid-login tests and
+  1 session-management login = 9 total login requests per run (within the 10-request limit).
+  A 100-second inter-login delay is injected via a beforeRequest script on each login
+  (cashiers 2-4) so that all 9 logins spread across ~7 minutes, well inside the 15-minute
+  window. Expected total runtime for this folder: ~5 minutes (3 × 100 s delays + request time).
+
+  ## 429 guard
+  A collection-level afterResponse script sets `rate_limited = "true"` on HTTP 429.
+  Each login's beforeRequest script checks that flag and calls pm.execution.skipRequest()
+  to skip all subsequent logins without retrying.
+
+  ## JWT security
+  The `token` collection variable is set immediately after each login and cleared after
+  the matching /me check. It is never logged or printed.
+order: 1000
+scripts:
+  - type: http:afterResponse
+    language: text/javascript
+    code: |-
+      // Folder-level 429 guard: flag the collection so subsequent logins are skipped.
+      if (pm.response.code === 429) {
+          pm.collectionVariables.set("rate_limited", "true");
+          pm.test("429 Rate Limit hit – subsequent login attempts will be skipped", function () {
+              pm.expect(pm.response.code).to.not.equal(429,
+                  "Rate limit exceeded (HTTP 429). Halting login attempts to protect the quota.");
+          });
+      }

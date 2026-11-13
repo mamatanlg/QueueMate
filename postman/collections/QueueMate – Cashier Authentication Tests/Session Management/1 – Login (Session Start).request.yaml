@@ -1,0 +1,34 @@
+$kind: http-request
+name: '1 – Login (Session Start)'
+method: POST
+url: '{{base_url}}/api/v1/auth/login'
+order: 1000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "username": "cashier1",
+      "password": "{{password}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test("Status is 200 OK", function () {
+          pm.response.to.have.status(200);
+      });
+
+      pm.test("Response contains accessToken", function () {
+          const json = pm.response.json();
+          pm.expect(json).to.have.property("accessToken");
+          pm.expect(json.accessToken).to.be.a("string").and.not.empty;
+      });
+
+      pm.test("Token captured into collection variable", function () {
+          const json = pm.response.json();
+          pm.collectionVariables.set("token", json.accessToken);
+          pm.expect(pm.collectionVariables.get("token")).to.not.be.empty;
+      });

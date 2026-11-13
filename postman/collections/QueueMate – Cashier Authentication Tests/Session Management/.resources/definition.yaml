@@ -1,0 +1,29 @@
+$kind: collection
+name: Session Management
+description: |-
+  End-to-end session lifecycle: login → access protected resource → logout → clear token → verify access denied.
+
+  ## Logout semantics (verified)
+  The logout endpoint (POST /api/v1/auth/logout) accepts a Bearer token and returns a success
+  response. The backend uses stateless JWTs and does NOT maintain a server-side token blocklist.
+  Token invalidation is therefore client-side only: the `token` variable is cleared after logout.
+  The final request in this folder confirms that a missing/empty token causes the server to
+  return 401 Unauthorized.
+
+  ## Rate-limit note
+  The login in step 1 is the 9th and final login request in the full collection run.
+  The 429 guard is checked before sending it.
+order: 4000
+scripts:
+  - type: http:beforeRequest
+    language: text/javascript
+    code: |-
+      // 429 guard: skip session-management login if the rate limit was already hit.
+      // Only applies to the login request (POST /api/v1/auth/login).
+      if (
+          pm.request.method === "POST" &&
+          pm.request.url.toString().includes("/auth/login") &&
+          pm.collectionVariables.get("rate_limited") === "true"
+      ) {
+          pm.execution.skipRequest();
+      }

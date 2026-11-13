@@ -33,7 +33,7 @@ Create missing cashier accounts from an interactive terminal:
 npm run seed:cashiers
 ```
 
-The script asks for a distinct password for Cashier 1–4 without echoing input. Use passwords with 12–72 UTF-8 bytes. It creates `cashier1` through `cashier4`, assigned in order to active Windows 1–4, hashes passwords with bcrypt, and skips existing usernames or occupied window assignments without overwriting them. The script does not reset or reveal existing passwords.
+The script first checks that Windows 1–4 exist and are active, and that any existing expected accounts have the cashier role, are active, and are assigned to their matching window. It stops with an error on conflicting usernames or window assignments and does not modify existing staff. If accounts are missing, it prompts once for a shared password without echoing input; use a password with 12–72 UTF-8 bytes. The password is hashed with bcrypt and the hash is reused only for newly created accounts. Creation and final verification run in a transaction, and any insertion or verification error rolls back all new accounts. Re-running the command leaves already-correct accounts unchanged.
 
 ## Run
 
