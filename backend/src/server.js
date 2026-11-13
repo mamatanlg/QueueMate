@@ -6,8 +6,10 @@ import { pool } from './db/pool.js'
 import { createSocketServer } from './sockets/create-socket-server.js'
 
 export function createBackendServer() {
-  const httpServer = createServer(createApp())
+  const app = createApp()
+  const httpServer = createServer(app)
   const io = createSocketServer(httpServer)
+  app.set('io', io)
 
   return { httpServer, io }
 }
