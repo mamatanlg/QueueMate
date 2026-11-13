@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "seed:cashiers": "node scripts/seed-cashiers.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

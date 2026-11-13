@@ -5,9 +5,13 @@ import helmet from 'helmet'
 import { createCorsOrigin } from './config/cors.js'
 import { config } from './config/env.js'
 import { errorHandler, notFoundHandler } from './middleware/error-handler.js'
-import apiRoutes from './routes/index.js'
+import { pool } from './db/pool.js'
+import { createApiRoutes } from './routes/index.js'
 
-export function createApp() {
+export function createApp({
+  database = pool,
+  sessionSecret = config.sessionSecret,
+} = {}) {
   const app = express()
 
   app.disable('x-powered-by')
@@ -23,7 +27,7 @@ export function createApp() {
     standardHeaders: 'draft-8',
     legacyHeaders: false,
   }))
-  app.use('/api/v1', apiRoutes)
+  app.use('/api/v1', createApiRoutes({ database, sessionSecret }))
   app.use(notFoundHandler)
   app.use(errorHandler)
 
