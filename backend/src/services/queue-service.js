@@ -94,6 +94,7 @@ export async function getPublicQueue({ database }) {
       (
         SELECT COUNT(*)::integer FROM queue_tickets
         WHERE status = 'waiting'
+          AND business_date = (SELECT day FROM business_day)
       ) AS waiting_count,
       COALESCE((
         SELECT json_agg(json_build_object(
@@ -105,7 +106,9 @@ export async function getPublicQueue({ database }) {
         ) ORDER BY w.window_number)
         FROM cashier_windows w
         LEFT JOIN queue_tickets q
-          ON q.window_id = w.id AND q.status = 'serving'
+          ON q.window_id = w.id
+         AND q.status = 'serving'
+         AND q.business_date = (SELECT day FROM business_day)
         WHERE w.window_number BETWEEN 1 AND 4
       ), '[]'::json) AS windows
   `)
@@ -151,8 +154,13 @@ export async function getTicketStatus({ database, ticketId, accessToken }) {
 
 export async function getCashierWindow({ database, auth }) {
   const result = await database.query(
-    `SELECT w.window_number, w.window_name, w.availability_status,
+    `WITH business_day AS (
+       SELECT (NOW() AT TIME ZONE 'Asia/Manila')::date AS day
+     )
+     SELECT (SELECT day FROM business_day) AS business_date,
+            w.window_number, w.window_name, w.availability_status,
             q.queue_number AS current_queue_number,
+            q.business_date AS current_ticket_business_date,
             t.name AS current_transaction_type
      FROM cashier_windows w
      LEFT JOIN queue_tickets q
@@ -173,9 +181,11 @@ export async function getCashierWindow({ database, auth }) {
       number: window.window_number,
       name: window.window_name,
       status: window.availability_status,
+      businessDate: window.business_date,
       currentTicketNumber: window.current_queue_number === null
         ? null
         : formatQueueNumber(window.current_queue_number),
+      currentTicketBusinessDate: window.current_ticket_business_date,
       currentTransactionType: window.current_transaction_type,
     },
   }
@@ -183,12 +193,16 @@ export async function getCashierWindow({ database, auth }) {
 
 export async function getWaitingQueue({ database }) {
   const result = await database.query(`
+    WITH business_day AS (
+      SELECT (NOW() AT TIME ZONE 'Asia/Manila')::date AS day
+    )
     SELECT q.business_date, q.queue_number, t.name AS transaction_type,
            q.issued_at
     FROM queue_tickets q
     JOIN transaction_types t ON t.id = q.transaction_type_id
     WHERE q.status = 'waiting'
-    ORDER BY q.business_date, q.queue_number
+      AND q.business_date = (SELECT day FROM business_day)
+    ORDER BY q.queue_number
   `)
 
   return result.rows.map((ticket) => ({
@@ -273,7 +287,8 @@ export async function callNext({ database, auth, publicEvent }) {
        FROM queue_tickets q
        JOIN transaction_types t ON t.id = q.transaction_type_id
        WHERE q.status = 'waiting'
-       ORDER BY q.business_date, q.queue_number
+         AND q.business_date = (NOW() AT TIME ZONE 'Asia/Manila')::date
+       ORDER BY q.queue_number
        LIMIT 1
        FOR UPDATE OF q`,
     )
@@ -385,7 +400,8 @@ export async function finishCurrentTicket({
     if (!window) throw new HttpError(404, 'Assigned window not found')
 
     const currentResult = await client.query(
-      `SELECT id, business_date, queue_number
+      `SELECT id, business_date, queue_number,
+              (NOW() AT TIME ZONE 'Asia/Manila')::date AS current_business_date
        FROM queue_tickets
        WHERE window_id = $1 AND status = 'serving'
        FOR UPDATE`,
@@ -393,6 +409,12 @@ export async function finishCurrentTicket({
     )
     const current = currentResult.rows[0]
     if (!current) throw new HttpError(409, 'There is no current ticket')
+    if (String(current.business_date) !== String(current.current_business_date)) {
+      throw new HttpError(
+        409,
+        'Previous-business-date tickets require administrative resolution',
+      )
+    }
 
     const status = action === 'completed' ? 'completed' : 'skipped'
     const timestamp = action === 'completed' ? 'completed_at' : 'skipped_at'

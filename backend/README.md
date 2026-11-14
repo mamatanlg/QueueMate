@@ -31,7 +31,8 @@ For a fresh database, apply these migrations in order from the repository root:
 
 1. [`database/migrations/000_operational_baseline.sql`](../database/migrations/000_operational_baseline.sql) creates the eight operational tables and inserts the four cashier windows, three transaction types, and three system settings.
 2. [`database/migrations/001_auth_sessions.sql`](../database/migrations/001_auth_sessions.sql) creates the cashier authentication session table and its indexes.
-3. Run the cashier seed script below to create any missing cashier accounts.
+3. [`database/migrations/002_active_cashier_window_assignments.sql`](../database/migrations/002_active_cashier_window_assignments.sql) replaces unconditional cashier window uniqueness with uniqueness for active assignments only. It stops if active assignment conflicts exist and does not change staff or queue records.
+4. Run the cashier seed script below to create any missing cashier accounts.
 
 The operational baseline is for a fresh database only. Do not replay it against an existing populated QueueMate database: it creates tables and inserts reference records. Check an existing installation against the baseline definitions and reconcile differences separately; do not recreate its tables or records. Apply the auth-session migration to an existing database only after verifying that its objects are not already present.
 
@@ -62,25 +63,28 @@ The server listens on port 4000 by default and binds to network interfaces so LA
 - `GET /api/v1/health` — backend process health.
 - `GET /api/v1/health/database` — executes `SELECT 1`; returns `503` if the database is unconfigured or unavailable.
 
+The root Vite PC application proxies `/api/v1` to `http://localhost:4000` in development. Start this backend separately with `npm run dev` from `backend/`. For a deployed frontend, set `VITE_API_BASE_URL` to the backend's public API base URL, ending in `/api/v1`, and allow the frontend origin in the backend's `CLIENT_ORIGINS`.
+
 ## API
 
-All responses use JSON except logout (`204 No Content`). Cashier routes require `Authorization: Bearer <accessToken>`. Login tokens expire after eight hours and are checked against the session table on every authenticated request; logout revokes the current token. Ticket access tokens are returned only when issuing a ticket and must be sent in the `X-Ticket-Token` header when looking up that ticket. Store them securely; they cannot be recovered from the database.
+All responses use JSON except logout (`204 No Content`). Protected routes require `Authorization: Bearer <accessToken>`. Login tokens expire after eight hours and are checked against the session table on every authenticated request; logout revokes the current token. Ticket access tokens are returned only when issuing a ticket and must be sent in the `X-Ticket-Token` header when looking up that ticket. Store them securely; they cannot be recovered from the database.
 
 ### Authentication
 
 `POST /api/v1/auth/login`
 
 ```json
-{ "username": "cashier1", "password": "<cashier password>" }
+{ "username": "staff1", "password": "<account password>" }
 ```
 
-Sanitized response:
+Successful login includes the database-assigned `role`. A cashier response preserves the assigned-window fields:
 
 ```json
 {
   "accessToken": "<JWT>",
   "tokenType": "Bearer",
   "expiresIn": 28800,
+  "role": "cashier",
   "cashier": {
     "username": "cashier1",
     "displayName": "Cashier 1",
@@ -88,6 +92,8 @@ Sanitized response:
   }
 }
 ```
+
+Admin login returns `role: "admin"` and an `admin` object with the username and display name; it does not include a window.
 
 `POST /api/v1/auth/logout` — authenticated; revokes the current session.
 
@@ -133,6 +139,19 @@ All routes below are restricted to the authenticated cashier's assigned window. 
 - `POST /api/v1/cashier/current/skip` — skips the current ticket.
 
 Calling another ticket while one is serving returns `409`. Queue claims use a PostgreSQL transaction and row lock without `SKIP LOCKED`, so a locked older ticket is not bypassed. Daily numbers are generated atomically using the Manila business date. Near-turn notifications are created only when the N-5 ticket is called, not when it is skipped.
+
+### Admin cashier and window management
+
+These routes require an active session whose database account has the `admin` role. Cashier accounts cannot access them. Account responses omit password hashes and authentication secrets.
+
+- `GET /api/v1/admin/cashiers` — list cashier accounts.
+- `GET /api/v1/admin/cashiers/{staffId}` — view one cashier.
+- `POST /api/v1/admin/cashiers` — create an active cashier with a username, display name, password, and available window ID.
+- `PATCH /api/v1/admin/cashiers/{staffId}` — update username, display name, password, or an active cashier's window.
+- `PATCH /api/v1/admin/cashiers/{staffId}/status` — activate or deactivate a cashier using `{"isActive":true}` or `false`.
+- `GET /api/v1/admin/windows` — view all windows, availability, and active assignments.
+
+Window assignments must target an active, unoccupied window. Deactivation revokes the cashier's sessions but retains the account and historical window assignment; reactivation requires that assignment to be available. The API does not move queue tickets or history and does not provide active-cashier window swaps.
 
 Socket.IO broadcasts `ticket:issued`, `ticket:called`, `ticket:completed`, `ticket:skipped`, `window:updated`, and `notification:created`. Public events contain no staff identity, ticket access token, or token hash.
 

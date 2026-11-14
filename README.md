@@ -29,7 +29,7 @@ Mobile app (Expo) ─────┘
 | `database/` | PostgreSQL schema and migrations | Persistent shared queue and application data |
 | `docs/` | Project documentation | Architecture and implementation notes |
 
-The repository already contains a root-level Vite/React and Express application (`src/`, `server/`, and root package files). Those files are preserved as legacy material; the new applications will be developed in the folders above. The existing root application does not define the target architecture.
+The repository also retains a root-level Vite/React and Express application (`src/`, `server/`, and root package files). Its existing `/cashier` portal is the PC login surface for the current cashier/admin integration; `/admin` is the protected administrator workspace. The separate `cashier-web/`, `public-display/`, and `mobile-app/` projects remain distinct from that root application.
 
 ### Queue rules the backend must enforce
 

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import healthRoutes from './health-routes.js'
 import { createAuthRoutes } from './auth-routes.js'
+import { createAdminRoutes } from './admin-routes.js'
 import { createCashierRoutes } from './cashier-routes.js'
 import { createPublicRoutes } from './public-routes.js'
 import { HttpError } from '../middleware/http-error.js'
@@ -16,12 +17,14 @@ export function createApiRoutes({ database, sessionSecret }) {
     router.use('/auth', databaseUnavailable)
     router.use('/public', databaseUnavailable)
     router.use('/cashier', databaseUnavailable)
+    router.use('/admin', databaseUnavailable)
     return router
   }
 
   router.use('/auth', createAuthRoutes({ database, sessionSecret }))
   router.use('/public', createPublicRoutes({ database }))
   router.use('/cashier', createCashierRoutes({ database, sessionSecret }))
+  router.use('/admin', createAdminRoutes({ database, sessionSecret }))
 
   return router
 }

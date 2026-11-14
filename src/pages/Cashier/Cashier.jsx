@@ -1,12 +1,6 @@
-import { useMemo, useState } from 'react'
-import {
-  createInitialQueue,
-  demoCashier,
-  demoCredentials,
-  initialActivity,
-  initialCurrentTicket,
-  initialDailyStats,
-} from './cashierMockData'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { useAuth } from '../../hooks/useAuth'
 import './Cashier.css'
 
 const navigationItems = [
@@ -52,30 +46,53 @@ function formatClock(date) {
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
+    timeZone: 'Asia/Manila',
   })
 }
 
-function LoginScreen({ onLogin }) {
-  const [username, setUsername] = useState(demoCredentials.username)
-  const [password, setPassword] = useState(demoCredentials.password)
-  const [error, setError] = useState('')
+function formatBusinessDate(value) {
+  if (!value) return 'Loading business date…'
+  return new Date(`${value}T00:00:00+08:00`).toLocaleDateString('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'Asia/Manila',
+  })
+}
 
-  function handleSubmit(event) {
+function LoginScreen({ onLogin, sessionNotice }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [pending, setPending] = useState(false)
+  const location = useLocation()
+
+  async function handleSubmit(event) {
     event.preventDefault()
-    if (username !== demoCredentials.username || password !== demoCredentials.password) {
-      setError('Those demo credentials do not match. Use the details shown below.')
-      return
+    setError('')
+    setPending(true)
+    try {
+      await onLogin(username, password)
+      setPassword('')
+    } catch (loginError) {
+      setError(loginError.status === 401
+        ? 'Username or password is incorrect, or this account is inactive.'
+        : loginError.status === 429
+          ? 'Too many sign-in attempts. Please wait before trying again.'
+          : loginError.message)
+    } finally {
+      setPending(false)
     }
-    onLogin()
   }
 
   return (
     <main className="cashier-login">
       <section className="cashier-login__brand">
-        <a className="cashier-brand" href="/cashier" aria-label="QueueMate home">
+        <Link className="cashier-brand" to="/cashier" aria-label="QueueMate home">
           <span className="cashier-brand__mark">Q</span>
           <span>Queue<span>Mate</span></span>
-        </a>
+        </Link>
         <div className="cashier-login__message">
           <span className="cashier-eyebrow">BUSINESS OFFICE · SAN ISIDRO COLLEGE</span>
           <h1>A calmer way to keep the line moving.</h1>
@@ -93,13 +110,18 @@ function LoginScreen({ onLogin }) {
         <div className="cashier-login__form-wrap">
           <span className="cashier-eyebrow cashier-eyebrow--light">CASHIER PORTAL</span>
           <h2>Welcome back</h2>
-          <p className="cashier-login__subheading">Sign in to manage your assigned window.</p>
+          <p className="cashier-login__subheading">Sign in to open your authorized workspace.</p>
+
+          {(location.state?.notice || sessionNotice) && (
+            <p className="cashier-form__notice" role="status">{location.state?.notice || sessionNotice}</p>
+          )}
 
           <form className="cashier-form" onSubmit={handleSubmit}>
             <label htmlFor="cashier-username">Username</label>
             <input
               id="cashier-username"
               autoComplete="username"
+              required
               value={username}
               onChange={(event) => setUsername(event.target.value)}
             />
@@ -108,24 +130,21 @@ function LoginScreen({ onLogin }) {
               id="cashier-password"
               type="password"
               autoComplete="current-password"
+              required
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
             {error && <p className="cashier-form__error" role="alert">{error}</p>}
-            <button className="cashier-button cashier-button--primary cashier-form__submit" type="submit">
-              Sign in <Icon name="arrow" size={17} />
+            <button
+              className="cashier-button cashier-button--primary cashier-form__submit"
+              disabled={pending}
+              type="submit"
+            >
+              {pending ? 'Signing in…' : 'Sign in'} <Icon name="arrow" size={17} />
             </button>
           </form>
 
-          <div className="cashier-demo-hint">
-            <span className="cashier-demo-hint__dot" />
-            <div>
-              <strong>Demo preview</strong>
-              <p>Username: <code>{demoCredentials.username}</code></p>
-              <p>Password: <code>{demoCredentials.password}</code></p>
-            </div>
-          </div>
-          <p className="cashier-login__footnote">This preview uses local mock data. No real authentication is performed.</p>
+          <p className="cashier-login__footnote">For authorized QueueMate cashiers and administrators.</p>
         </div>
       </section>
     </main>
@@ -160,71 +179,143 @@ function TicketRow({ ticket, position }) {
   )
 }
 
-function CashierDashboard({ onLogout }) {
-  const [available, setAvailable] = useState(true)
+function CashierDashboard() {
+  const { session, request, signOut } = useAuth()
+  const navigate = useNavigate()
+  const [account, setAccount] = useState(null)
+  const [waiting, setWaiting] = useState([])
+  const [activity, setActivity] = useState([])
   const [view, setView] = useState('counter')
-  const [waiting, setWaiting] = useState(createInitialQueue)
-  const [currentTicket, setCurrentTicket] = useState(initialCurrentTicket)
-  const [stats, setStats] = useState(initialDailyStats)
-  const [activity, setActivity] = useState(initialActivity)
+  const [loading, setLoading] = useState(true)
+  const [dataLoaded, setDataLoaded] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [now, setNow] = useState(() => new Date())
 
-  const dateLabel = useMemo(() => now.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-    year: 'numeric',
-  }), [now])
+  const refresh = useCallback(async (showLoading = true) => {
+    if (showLoading) setLoading(true)
+    setError('')
+    try {
+      const [currentAccount, queue] = await Promise.all([
+        request('/cashier/me'),
+        request('/cashier/queue'),
+      ])
+      setAccount(currentAccount)
+      setWaiting(queue.tickets.map((ticket) => ({
+        id: `${ticket.businessDate}-${ticket.ticketNumber}`,
+        number: ticket.ticketNumber,
+        type: ticket.transactionType,
+        businessDate: ticket.businessDate,
+        issuedAt: formatClock(new Date(ticket.issuedAt)),
+      })))
+      setDataLoaded(true)
+      setNow(new Date())
+    } catch (loadError) {
+      if (loadError.status !== 401) setError(loadError.message)
+    } finally {
+      if (showLoading) setLoading(false)
+    }
+  }, [request])
+
+  useEffect(() => {
+    refresh()
+    const poller = window.setInterval(() => refresh(false), 15000)
+    const clock = window.setInterval(() => setNow(new Date()), 30000)
+    return () => {
+      window.clearInterval(poller)
+      window.clearInterval(clock)
+    }
+  }, [refresh])
+
+  const windowInfo = account?.window
+  const cashier = account?.cashier ?? session.profile
+  const available = windowInfo?.status === 'available'
+  const currentTicket = windowInfo?.currentTicketNumber
+    ? {
+        number: windowInfo.currentTicketNumber,
+        type: windowInfo.currentTransactionType ?? 'Transaction',
+      }
+    : null
+  const currentTicketIsToday = Boolean(
+    currentTicket
+    && windowInfo.currentTicketBusinessDate
+    && windowInfo.currentTicketBusinessDate === windowInfo.businessDate,
+  )
+  const previousDateTicket = Boolean(currentTicket && !currentTicketIsToday)
+  const dateLabel = useMemo(
+    () => formatBusinessDate(windowInfo?.businessDate),
+    [windowInfo?.businessDate],
+  )
+  const pageTitle = navigationItems.find((item) => item.id === view)?.label ?? 'Active Counter'
 
   function recordActivity(action, ticket) {
-    const time = formatClock(new Date())
-    setNow(new Date())
-    setActivity((items) => [
-      { id: `activity-${Date.now()}`, action, number: ticket.number, type: ticket.type, time },
-      ...items,
-    ])
+    const item = {
+      id: `${Date.now()}-${ticket.number}`,
+      action,
+      number: ticket.number,
+      type: ticket.type,
+      time: formatClock(new Date()),
+    }
+    setActivity((items) => [item, ...items])
     setNotice(`Ticket ${ticket.number} ${action.toLowerCase()}.`)
     window.setTimeout(() => setNotice(''), 3200)
   }
 
-  function callNext() {
-    if (!available || currentTicket || waiting.length === 0) return
-    const [nextTicket, ...remaining] = waiting
-    const calledAt = formatClock(new Date())
-    setWaiting(remaining)
-    setCurrentTicket({ ...nextTicket, calledAt })
-    setStats((current) => ({ ...current, servedToday: current.servedToday + 1 }))
-    recordActivity('Called', nextTicket)
-  }
-
-  function finishTicket(action) {
-    if (!currentTicket) return
-    const ticket = currentTicket
-    setCurrentTicket(null)
-    if (action === 'Completed') {
-      setStats((current) => ({ ...current, completed: current.completed + 1 }))
-    } else {
-      setStats((current) => ({ ...current, skipped: current.skipped + 1 }))
+  async function runTicketAction(path, action) {
+    setPending(true)
+    setError('')
+    try {
+      const result = await request(path, { method: 'POST' })
+      recordActivity(action, {
+        number: result.ticketNumber,
+        type: result.transactionType ?? currentTicket?.type ?? 'Transaction',
+      })
+      await refresh(false)
+    } catch (actionError) {
+      if (actionError.status !== 401) setError(actionError.message)
+    } finally {
+      setPending(false)
     }
-    recordActivity(action, ticket)
   }
 
-  function changeAvailability(nextAvailable) {
-    setAvailable(nextAvailable)
-    setNotice(`Window marked ${nextAvailable ? 'available' : 'unavailable'}.`)
-    window.setTimeout(() => setNotice(''), 3200)
+  async function changeAvailability(nextAvailable) {
+    setPending(true)
+    setError('')
+    try {
+      const result = await request('/cashier/window/status', {
+        method: 'PATCH',
+        body: { availabilityStatus: nextAvailable ? 'available' : 'unavailable' },
+      })
+      setNotice(`Window marked ${result.status}.`)
+      await refresh(false)
+    } catch (actionError) {
+      if (actionError.status !== 401) setError(actionError.message)
+    } finally {
+      setPending(false)
+    }
   }
 
-  const pageTitle = navigationItems.find((item) => item.id === view)?.label ?? 'Active Counter'
+  async function logout() {
+    let message = ''
+    try {
+      await signOut()
+    } catch {
+      message = 'Signed out on this device, but the backend could not confirm revocation. The token will expire automatically.'
+    }
+    navigate('/cashier', {
+      replace: true,
+      state: message ? { notice: message } : undefined,
+    })
+  }
 
   return (
     <div className="cashier-app">
       <aside className="cashier-sidebar">
-        <a className="cashier-brand cashier-brand--sidebar" href="/cashier" aria-label="QueueMate">
+        <Link className="cashier-brand cashier-brand--sidebar" to="/cashier" aria-label="QueueMate">
           <span className="cashier-brand__mark">Q</span>
           <span>Queue<span>Mate</span></span>
-        </a>
+        </Link>
         <div className="cashier-sidebar__caption">WORKSPACE</div>
         <nav className="cashier-nav" aria-label="Cashier sections">
           {navigationItems.map((item) => (
@@ -236,20 +327,22 @@ function CashierDashboard({ onLogout }) {
             >
               <Icon name={item.icon} size={19} />
               <span>{item.label}</span>
-              {item.id === 'queue' && <span className="cashier-nav__count">{waiting.length}</span>}
+              {item.id === 'queue' && <span className="cashier-nav__count">{dataLoaded ? waiting.length : '—'}</span>}
             </button>
           ))}
         </nav>
         <div className="cashier-sidebar__spacer" />
         <div className="cashier-sidebar__counter">
           <span className="cashier-sidebar__counter-icon"><Icon name="window" size={18} /></span>
-          <div><small>YOUR COUNTER</small><strong>{demoCashier.windowName}</strong></div>
+          <div><small>YOUR COUNTER</small><strong>{windowInfo?.name ?? 'Loading…'}</strong></div>
           <span className={`cashier-status-dot ${available ? 'is-available' : ''}`} />
         </div>
         <div className="cashier-sidebar__profile">
-          <span className="cashier-avatar">MS</span>
-          <span className="cashier-sidebar__profile-name"><strong>{demoCashier.name}</strong><small>{demoCashier.role}</small></span>
-          <button className="cashier-icon-button" type="button" onClick={onLogout} aria-label="Log out" title="Log out">
+          <span className="cashier-avatar">{initials(cashier?.displayName ?? '')}</span>
+          <span className="cashier-sidebar__profile-name">
+            <strong>{cashier?.displayName ?? 'Cashier'}</strong><small>Cashier</small>
+          </span>
+          <button className="cashier-icon-button" type="button" onClick={logout} aria-label="Log out" title="Log out">
             <Icon name="logout" size={17} />
           </button>
         </div>
@@ -259,9 +352,15 @@ function CashierDashboard({ onLogout }) {
         <header className="cashier-topbar">
           <div className="cashier-topbar__crumb"><span>Cashier workspace</span><Icon name="chevron" size={14} /><strong>{pageTitle}</strong></div>
           <div className="cashier-topbar__right">
-            <span className="cashier-preview-label"><span /> Local preview</span>
-            <button type="button" className="cashier-icon-button cashier-notification-button" aria-label="Notifications">
-              <Icon name="bell" size={19} /><i />
+            <span className="cashier-preview-label cashier-live-label"><span /> Live backend</span>
+            <button
+              type="button"
+              className="cashier-icon-button cashier-notification-button"
+              onClick={() => refresh()}
+              aria-label="Refresh cashier data"
+              title="Refresh"
+            >
+              <Icon name="arrow" size={18} />
             </button>
             <div className="cashier-topbar__date"><strong>{formatClock(now)}</strong><span>{dateLabel}</span></div>
           </div>
@@ -271,18 +370,26 @@ function CashierDashboard({ onLogout }) {
           <section className="cashier-page-heading">
             <div>
               <span className="cashier-eyebrow cashier-eyebrow--light">SAN ISIDRO COLLEGE · BUSINESS OFFICE</span>
-              <h1>{view === 'counter' ? 'Good morning, Maria' : pageTitle}</h1>
-              <p>{view === 'counter' ? 'Here’s what’s happening at your counter today.' : `A live preview of your ${pageTitle.toLowerCase()}.`}</p>
+              <h1>{view === 'counter' ? `Welcome, ${cashier?.displayName ?? 'Cashier'}` : pageTitle}</h1>
+              <p>{view === 'counter' ? 'Live information for your assigned window.' : `${pageTitle} from the QueueMate backend.`}</p>
             </div>
             <div className="cashier-date-chip"><Icon name="clock" size={16} /><span>{dateLabel}</span></div>
           </section>
 
-          {view === 'counter' && (
+          {error && <div className="cashier-api-error" role="alert">{error}</div>}
+          {loading && <div className="cashier-api-loading" role="status">Connecting to the QueueMate backend…</div>}
+          {!loading && !dataLoaded && (
+            <div className="cashier-api-loading" role="status">
+              Live cashier data is unavailable. Use Refresh to try again.
+            </div>
+          )}
+
+          {dataLoaded && view === 'counter' && (
             <>
               <section className="cashier-window-panel">
                 <div className="cashier-window-panel__identity">
                   <span className="cashier-window-panel__icon"><Icon name="window" size={20} /></span>
-                  <div><span>ASSIGNED WINDOW</span><strong>{demoCashier.windowName}</strong></div>
+                  <div><span>ASSIGNED WINDOW</span><strong>{windowInfo?.name ?? 'Loading…'}</strong></div>
                   <span className="cashier-window-panel__divider" />
                   <div className="cashier-window-panel__availability">
                     <span className={`cashier-availability-indicator ${available ? 'is-available' : ''}`} />
@@ -293,6 +400,7 @@ function CashierDashboard({ onLogout }) {
                   <button
                     className={`cashier-availability-button ${available ? 'is-selected' : ''}`}
                     onClick={() => changeAvailability(true)}
+                    disabled={pending || !windowInfo}
                     type="button"
                     aria-pressed={available}
                   >
@@ -301,6 +409,7 @@ function CashierDashboard({ onLogout }) {
                   <button
                     className={`cashier-availability-button ${!available ? 'is-selected is-unavailable' : ''}`}
                     onClick={() => changeAvailability(false)}
+                    disabled={pending || !windowInfo}
                     type="button"
                     aria-pressed={!available}
                   >
@@ -309,17 +418,22 @@ function CashierDashboard({ onLogout }) {
                 </div>
               </section>
 
-              <section className="cashier-stats-grid" aria-label="Today's statistics">
-                <StatCard label="Waiting in queue" value={waiting.length} note="tickets in line" tone="queue" />
-                <StatCard label="Completed today" value={stats.completed} note="at this window" tone="complete" />
-                <StatCard label="Skipped today" value={stats.skipped} note="tickets skipped" tone="skip" />
-                <StatCard label="Tickets served" value={stats.servedToday} note="today at this window" tone="served" />
+              <section className="cashier-stats-grid" aria-label="Available queue statistics">
+                <StatCard label="Waiting today" value={waiting.length} note="live backend queue" tone="queue" />
+                <StatCard label="Completed today" value="—" note="reporting API unavailable" tone="complete" />
+                <StatCard label="Skipped today" value="—" note="reporting API unavailable" tone="skip" />
+                <StatCard label="Tickets served" value="—" note="reporting API unavailable" tone="served" />
               </section>
 
               <div className="cashier-work-grid">
                 <section className="cashier-current-card">
                   <div className="cashier-card-heading">
-                    <div><span className="cashier-eyebrow cashier-eyebrow--light">NOW SERVING</span><h2>Current ticket</h2></div>
+                    <div>
+                      <span className="cashier-eyebrow cashier-eyebrow--light">
+                        {previousDateTicket ? 'UNRESOLVED PRIOR-DAY TICKET' : 'NOW SERVING'}
+                      </span>
+                      <h2>Current ticket</h2>
+                    </div>
                     <span className={`cashier-serving-badge ${currentTicket ? '' : 'is-idle'}`}><i />{currentTicket ? 'In service' : 'Ready for next'}</span>
                   </div>
                   {currentTicket ? (
@@ -329,16 +443,36 @@ function CashierDashboard({ onLogout }) {
                         <span className={`cashier-type-pill cashier-type-pill--large ${currentTicket.type === 'SOA' ? 'cashier-type-pill--blue' : currentTicket.type === 'Payment' ? 'cashier-type-pill--teal' : 'cashier-type-pill--violet'}`}>
                           {currentTicket.type}
                         </span>
-                        <span className="cashier-ticket-display__called"><Icon name="clock" size={15} /> Called at {currentTicket.calledAt}</span>
+                        <span className="cashier-ticket-display__called">
+                          {previousDateTicket
+                            ? `Business date ${windowInfo.currentTicketBusinessDate}`
+                            : 'Currently assigned to this window'}
+                        </span>
                       </div>
-                      <div className="cashier-current-actions">
-                        <button className="cashier-button cashier-button--complete" type="button" onClick={() => finishTicket('Completed')}>
-                          <Icon name="check" size={18} /> Complete
-                        </button>
-                        <button className="cashier-button cashier-button--skip" type="button" onClick={() => finishTicket('Skipped')}>
-                          Skip ticket
-                        </button>
-                      </div>
+                      {previousDateTicket ? (
+                        <p className="cashier-action-hint cashier-stale-ticket-warning">
+                          This ticket is not from today. Its status cannot be changed here; request an administrator to resolve it.
+                        </p>
+                      ) : (
+                        <div className="cashier-current-actions">
+                          <button
+                            className="cashier-button cashier-button--complete"
+                            type="button"
+                            onClick={() => runTicketAction('/cashier/current/complete', 'Completed')}
+                            disabled={pending || !currentTicketIsToday}
+                          >
+                            <Icon name="check" size={18} /> Complete
+                          </button>
+                          <button
+                            className="cashier-button cashier-button--skip"
+                            type="button"
+                            onClick={() => runTicketAction('/cashier/current/skip', 'Skipped')}
+                            disabled={pending || !currentTicketIsToday}
+                          >
+                            Skip ticket
+                          </button>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <div className="cashier-empty-current">
@@ -350,13 +484,13 @@ function CashierDashboard({ onLogout }) {
                   <button
                     className="cashier-button cashier-button--primary cashier-call-next"
                     type="button"
-                    onClick={callNext}
-                    disabled={!available || Boolean(currentTicket) || waiting.length === 0}
+                    onClick={() => runTicketAction('/cashier/queue/next', 'Called')}
+                    disabled={!available || Boolean(currentTicket) || waiting.length === 0 || pending || loading}
                   >
                     <Icon name="arrow" size={18} /> Call next ticket
                   </button>
                   {!available && <p className="cashier-action-hint">Mark this window available before calling the next ticket.</p>}
-                  {available && !currentTicket && waiting.length === 0 && <p className="cashier-action-hint">There are no waiting tickets right now.</p>}
+                  {available && !currentTicket && waiting.length === 0 && <p className="cashier-action-hint">There are no waiting tickets today.</p>}
                 </section>
 
                 <section className="cashier-queue-card">
@@ -369,45 +503,49 @@ function CashierDashboard({ onLogout }) {
                       {waiting.slice(0, 5).map((ticket, index) => <TicketRow key={ticket.id} ticket={ticket} position={index + 1} />)}
                     </div>
                   ) : (
-                    <div className="cashier-empty-list">The waiting queue is clear.</div>
+                    <div className="cashier-empty-list">{loading ? 'Loading queue…' : 'The waiting queue is clear.'}</div>
                   )}
-                  <div className="cashier-queue-foot"><span><span className="cashier-queue-foot__dot" /> Queue updates are local to this preview</span><span>Oldest first</span></div>
+                  <div className="cashier-queue-foot"><span><span className="cashier-queue-foot__dot cashier-queue-foot__dot--live" /> Synced with backend every 15 seconds</span><span>Oldest first</span></div>
                 </section>
               </div>
             </>
           )}
 
-          {view === 'queue' && (
+          {dataLoaded && view === 'queue' && (
             <section className="cashier-list-page">
-              <div className="cashier-list-page__summary"><strong>{waiting.length} tickets waiting</strong><span>Tickets are shown in call order.</span></div>
+              <div className="cashier-list-page__summary"><strong>{waiting.length} tickets waiting today</strong><span>Live backend data · call order</span></div>
               {waiting.length ? (
                 <div className="cashier-queue-list cashier-queue-list--full">
                   {waiting.map((ticket, index) => <TicketRow key={ticket.id} ticket={ticket} position={index + 1} />)}
                 </div>
-              ) : <div className="cashier-empty-list">The waiting queue is clear.</div>}
+              ) : <div className="cashier-empty-list">{loading ? 'Loading queue…' : 'The waiting queue is clear.'}</div>}
               <button className="cashier-button cashier-button--primary cashier-list-page__action" type="button" onClick={() => setView('counter')}>Back to active counter</button>
             </section>
           )}
 
-          {view === 'activity' && (
+          {dataLoaded && view === 'activity' && (
             <section className="cashier-list-page">
-              <div className="cashier-list-page__summary"><strong>Today’s activity</strong><span>Recent ticket actions at {demoCashier.windowName}.</span></div>
-              <div className="cashier-activity-list">
-                {activity.map((item) => (
-                  <article className="cashier-activity-row" key={item.id}>
-                    <span className={`cashier-activity-row__icon ${item.action === 'Completed' ? 'is-completed' : item.action === 'Skipped' ? 'is-skipped' : ''}`}>
-                      <Icon name={item.action === 'Completed' ? 'check' : item.action === 'Skipped' ? 'arrow' : 'counter'} size={17} />
-                    </span>
-                    <div className="cashier-activity-row__description"><strong>{item.action} ticket {item.number}</strong><span>{item.type} · {demoCashier.windowName}</span></div>
-                    <time>{item.time}</time>
-                  </article>
-                ))}
-              </div>
+              <div className="cashier-list-page__summary"><strong>Actions this session</strong><span>Successful actions recorded by this screen; server history is not available.</span></div>
+              {activity.length ? (
+                <div className="cashier-activity-list">
+                  {activity.map((item) => (
+                    <article className="cashier-activity-row" key={item.id}>
+                      <span className={`cashier-activity-row__icon ${item.action === 'Completed' ? 'is-completed' : item.action === 'Skipped' ? 'is-skipped' : ''}`}>
+                        <Icon name={item.action === 'Completed' ? 'check' : item.action === 'Skipped' ? 'arrow' : 'counter'} size={17} />
+                      </span>
+                      <div className="cashier-activity-row__description"><strong>{item.action} ticket {item.number}</strong><span>{item.type} · {windowInfo?.name ?? 'Assigned window'}</span></div>
+                      <time>{item.time}</time>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="cashier-empty-list">No actions have been completed in this browser session.</div>
+              )}
               <button className="cashier-button cashier-button--primary cashier-list-page__action" type="button" onClick={() => setView('counter')}>Back to active counter</button>
             </section>
           )}
 
-          <footer className="cashier-footer"><span>QueueMate <b>·</b> Cashier workspace</span><span>Local frontend preview</span></footer>
+          <footer className="cashier-footer"><span>QueueMate <b>·</b> Cashier workspace</span><span>Connected to backend</span></footer>
         </div>
       </main>
       {notice && <div className="cashier-toast" role="status"><span><Icon name="check" size={16} /></span>{notice}</div>}
@@ -415,15 +553,26 @@ function CashierDashboard({ onLogout }) {
   )
 }
 
+function initials(name) {
+  return name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase()
+}
+
 export default function Cashier() {
-  const [loggedIn, setLoggedIn] = useState(false)
+  const { session, sessionNotice, signIn } = useAuth()
+  const navigate = useNavigate()
+
+  if (session?.role === 'admin') return <Navigate to="/admin" replace />
+  if (session?.role === 'cashier') return <CashierDashboard />
+
+  async function login(username, password) {
+    const signedIn = await signIn(username, password)
+    navigate(signedIn.role === 'admin' ? '/admin' : '/cashier', { replace: true })
+  }
 
   return (
     <>
       <div className="cashier-desktop-interface">
-        {loggedIn
-          ? <CashierDashboard onLogout={() => setLoggedIn(false)} />
-          : <LoginScreen onLogin={() => setLoggedIn(true)} />}
+        <LoginScreen onLogin={login} sessionNotice={sessionNotice} />
       </div>
       <main className="cashier-device-restriction">
         Please use a desktop or laptop to access the Cashier Dashboard.

@@ -122,7 +122,7 @@ class QueueHttpDatabase {
         ? { rows: [{ id: knownTypes.get(name), name }] }
         : { rows: [] }
     }
-    if (sql.includes('Asia/Manila')) {
+    if (sql.trim().startsWith('SELECT (NOW() AT TIME ZONE')) {
       return { rows: [{ business_date: businessDate }] }
     }
     if (sql.includes('INSERT INTO daily_queue_counters')) {
@@ -180,13 +180,12 @@ class QueueHttpDatabase {
           .map(({ id }) => ({ id })),
       }
     }
-    if (sql.includes('ORDER BY q.business_date, q.queue_number')) {
+    if (sql.includes('FOR UPDATE OF q')) {
       const ticket = this.tickets
-        .filter(({ status }) => status === 'waiting')
-        .sort((left, right) => (
-          left.business_date.localeCompare(right.business_date)
-          || left.queue_number - right.queue_number
-        ))[0]
+        .filter((ticket) => (
+          ticket.status === 'waiting' && ticket.business_date === businessDate
+        ))
+        .sort((left, right) => left.queue_number - right.queue_number)[0]
       return {
         rows: ticket
           ? [{
@@ -237,6 +236,7 @@ class QueueHttpDatabase {
             id: ticket.id,
             business_date: ticket.business_date,
             queue_number: ticket.queue_number,
+            current_business_date: businessDate,
           }]
           : [],
       }
@@ -455,6 +455,24 @@ test('cashier HTTP queue operations call the oldest ticket, alert N-5, complete 
       windowNumber: 2,
     },
   })
+})
+
+test('HTTP Call Next selects today and leaves yesterday waiting tickets untouched', async (t) => {
+  const yesterday = makeTicket(99, { date: '2026-11-12' })
+  const today = makeTicket(1)
+  const database = new QueueHttpDatabase({ tickets: [yesterday, today] })
+  const { origin } = await createHttpFixture(t, database)
+  const token = await loginCashier(origin)
+
+  const response = await requestJson(origin, '/api/v1/cashier/queue/next', {
+    method: 'POST',
+    token,
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(response.body.ticketNumber, '001')
+  assert.equal(response.body.businessDate, businessDate)
+  assert.equal(yesterday.status, 'waiting')
 })
 
 test('HTTP Call Next rejects an unavailable window without claiming a ticket', async (t) => {
