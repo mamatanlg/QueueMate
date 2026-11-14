@@ -25,7 +25,17 @@ Set `DATABASE_URL` to the Supabase PostgreSQL connection string before checking 
 
 `CLIENT_ORIGINS` is a comma-separated allowlist of browser origins. In development, the default allowlist is `localhost:3000` and `localhost:3002` (including their `127.0.0.1` equivalents). Add the exact LAN origins used by local web clients when testing on other devices. Requests without an Origin header, such as native mobile requests, are allowed by CORS; CORS is not authentication.
 
-Before using cashier authentication, apply [`../database/migrations/001_auth_sessions.sql`](../database/migrations/001_auth_sessions.sql) once to the existing database. It adds only the JWT session table and indexes; it does not rerun or replace the legacy schema. Set `SESSION_SECRET` to a cryptographically random value of at least 32 characters. Do not use the example placeholder as a production secret.
+### Database setup
+
+For a fresh database, apply these migrations in order from the repository root:
+
+1. [`database/migrations/000_operational_baseline.sql`](../database/migrations/000_operational_baseline.sql) creates the eight operational tables and inserts the four cashier windows, three transaction types, and three system settings.
+2. [`database/migrations/001_auth_sessions.sql`](../database/migrations/001_auth_sessions.sql) creates the cashier authentication session table and its indexes.
+3. Run the cashier seed script below to create any missing cashier accounts.
+
+The operational baseline is for a fresh database only. Do not replay it against an existing populated QueueMate database: it creates tables and inserts reference records. Check an existing installation against the baseline definitions and reconcile differences separately; do not recreate its tables or records. Apply the auth-session migration to an existing database only after verifying that its objects are not already present.
+
+Set `SESSION_SECRET` to a cryptographically random value of at least 32 characters. Do not use the example placeholder as a production secret.
 
 Create missing cashier accounts from an interactive terminal:
 
