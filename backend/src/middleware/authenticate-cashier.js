@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken'
 import { HttpError } from './http-error.js'
 
-export function authenticateCashier({ database, sessionSecret }) {
+export function authenticateUser({ database, sessionSecret }) {
   return async (request, _response, next) => {
     const authorization = request.get('authorization')
     const match = authorization?.match(/^Bearer ([^\s]+)$/i)
@@ -38,7 +38,7 @@ export function authenticateCashier({ database, sessionSecret }) {
                 w.availability_status
          FROM auth_sessions a
          JOIN staff s ON s.id = a.staff_id
-         JOIN cashier_windows w ON w.id = s.assigned_window_id
+         LEFT JOIN cashier_windows w ON w.id = s.assigned_window_id
          WHERE a.session_id = $1 AND a.staff_id = $2
            AND a.revoked_at IS NULL AND a.expires_at > NOW()
            AND s.is_active = true`,
@@ -51,8 +51,10 @@ export function authenticateCashier({ database, sessionSecret }) {
         return
       }
 
-      if (staff.role !== 'cashier') {
-        next(new HttpError(403, 'Cashier access required'))
+      const validCashier = staff.role === 'cashier' && Boolean(staff.assigned_window_id)
+      const validAdmin = staff.role === 'admin' && staff.assigned_window_id === null
+      if (!validCashier && !validAdmin) {
+        next(new HttpError(403, 'Account role or window assignment is invalid'))
         return
       }
 
@@ -62,4 +64,41 @@ export function authenticateCashier({ database, sessionSecret }) {
       next(error)
     }
   }
+}
+
+function authorizeRole(role) {
+  return (request, _response, next) => {
+    if (request.auth?.role !== role) {
+      next(new HttpError(403, role === 'admin'
+        ? 'Administrator access required'
+        : 'Cashier access required'))
+      return
+    }
+
+    next()
+  }
+}
+
+function authenticateRole(options, role) {
+  const authenticate = authenticateUser(options)
+  const authorize = authorizeRole(role)
+
+  return (request, response, next) => {
+    authenticate(request, response, (error) => {
+      if (error) {
+        next(error)
+        return
+      }
+
+      authorize(request, response, next)
+    })
+  }
+}
+
+export function authenticateCashier(options) {
+  return authenticateRole(options, 'cashier')
+}
+
+export function authenticateAdmin(options) {
+  return authenticateRole(options, 'admin')
 }

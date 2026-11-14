@@ -13,17 +13,17 @@ const testPassword = 'http-test-password-12'
 const passwordHash = await bcrypt.hash(testPassword, 4)
 
 class AuthHttpDatabase {
-  constructor() {
+  constructor({ role = 'cashier', isActive = true } = {}) {
     this.staff = {
       id: randomUUID(),
-      username: 'cashier2',
+      username: role === 'admin' ? 'admin1' : 'cashier2',
       password_hash: passwordHash,
-      display_name: 'Cashier Two',
-      role: 'cashier',
-      is_active: true,
-      assigned_window_id: 'window-2',
-      window_number: 2,
-      window_name: 'Window 2',
+      display_name: role === 'admin' ? 'Admin One' : 'Cashier Two',
+      role,
+      is_active: isActive,
+      assigned_window_id: role === 'admin' ? null : 'window-2',
+      window_number: role === 'admin' ? null : 2,
+      window_name: role === 'admin' ? null : 'Window 2',
     }
     this.sessions = new Map()
     this.calls = []
@@ -85,6 +85,8 @@ class AuthHttpDatabase {
             window_number: this.staff.window_number,
             window_name: this.staff.window_name,
             availability_status: 'available',
+            business_date: '2026-11-13',
+            current_ticket_business_date: null,
             current_queue_number: null,
             current_transaction_type: null,
           }],
@@ -115,7 +117,7 @@ class AuthHttpDatabase {
         if (sql.includes("FROM queue_tickets") && sql.includes("status = 'serving'")) {
           return { rows: [] }
         }
-        if (sql.includes('ORDER BY q.business_date, q.queue_number')) {
+        if (sql.includes('FOR UPDATE OF q')) {
           return {
             rows: [{
               id: 'ticket-1',
@@ -221,6 +223,71 @@ test('HTTP login rejects invalid credentials and malformed input', async (t) => 
   })
 })
 
+test('HTTP login authenticates admins without a window and allows admin logout', async (t) => {
+  const database = new AuthHttpDatabase({ role: 'admin' })
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+
+  const login = await requestJson(server.origin, '/api/v1/auth/login', {
+    method: 'POST',
+    body: { username: 'admin1', password: testPassword },
+  })
+
+  assert.equal(login.status, 200)
+  assert.equal(login.body.role, 'admin')
+  assert.deepEqual(login.body.admin, {
+    username: 'admin1',
+    displayName: 'Admin One',
+  })
+  assert.equal('cashier' in login.body, false)
+
+  const cashierOperation = await requestJson(
+    server.origin,
+    '/api/v1/cashier/me',
+    { token: login.body.accessToken },
+  )
+  assert.equal(cashierOperation.status, 403)
+
+  const logout = await requestJson(server.origin, '/api/v1/auth/logout', {
+    method: 'POST',
+    token: login.body.accessToken,
+  })
+  assert.equal(logout.status, 204)
+  assert.ok([...database.sessions.values()][0].revoked)
+})
+
+test('HTTP login rejects inactive staff accounts', async (t) => {
+  const database = new AuthHttpDatabase({ isActive: false })
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+
+  const response = await requestJson(server.origin, '/api/v1/auth/login', {
+    method: 'POST',
+    body: { username: 'cashier2', password: testPassword },
+  })
+
+  assert.equal(response.status, 401)
+  assert.equal(response.body.error.message, 'Invalid username or password')
+})
+
+test('HTTP authentication rejects a session after its account is deactivated', async (t) => {
+  const database = new AuthHttpDatabase()
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+
+  const login = await requestJson(server.origin, '/api/v1/auth/login', {
+    method: 'POST',
+    body: { username: 'cashier2', password: testPassword },
+  })
+  assert.equal(login.status, 200)
+
+  database.staff.is_active = false
+  const response = await requestJson(server.origin, '/api/v1/cashier/me', {
+    token: login.body.accessToken,
+  })
+  assert.equal(response.status, 401)
+})
+
 test('protected HTTP routes require a token and use session-bound cashier identity and window', async (t) => {
   const database = new AuthHttpDatabase()
   const server = await startTestServer(database)
@@ -250,7 +317,9 @@ test('protected HTTP routes require a token and use session-bound cashier identi
       number: 2,
       name: 'Window 2',
       status: 'available',
+      businessDate: '2026-11-13',
       currentTicketNumber: null,
+      currentTicketBusinessDate: null,
       currentTransactionType: null,
     },
   })
@@ -310,6 +379,28 @@ test('HTTP logout revokes the session and prevents further protected access', as
     status: 401,
     message: 'Invalid or expired access token',
   })
+})
+
+test('HTTP authentication rejects an expired database session', async (t) => {
+  const database = new AuthHttpDatabase()
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+
+  const login = await requestJson(server.origin, '/api/v1/auth/login', {
+    method: 'POST',
+    body: { username: 'cashier2', password: testPassword },
+  })
+  assert.equal(login.status, 200)
+
+  const sessionId = database.calls.find(({ sql }) => (
+    sql.includes('INSERT INTO auth_sessions')
+  )).values[0]
+  database.sessions.get(sessionId).expiresAt = new Date(Date.now() - 1000)
+
+  const response = await requestJson(server.origin, '/api/v1/cashier/me', {
+    token: login.body.accessToken,
+  })
+  assert.equal(response.status, 401)
 })
 
 test('isolated HTTP login limiter allows ten requests and rejects the eleventh', async (t) => {

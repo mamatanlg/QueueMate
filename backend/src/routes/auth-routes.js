@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import rateLimit from 'express-rate-limit'
 import { login, logout } from '../services/auth-service.js'
-import { authenticateCashier } from '../middleware/authenticate-cashier.js'
+import { authenticateUser } from '../middleware/authenticate-cashier.js'
 import { validateRequest } from '../middleware/validate-request.js'
 import { loginSchema } from '../validation/schemas.js'
 
@@ -19,7 +19,7 @@ const authRateLimit = rateLimit({
 
 export function createAuthRoutes({ database, sessionSecret }) {
   const router = Router()
-  const requireCashier = authenticateCashier({ database, sessionSecret })
+  const requireAuthenticatedUser = authenticateUser({ database, sessionSecret })
 
   router.post(
     '/login',
@@ -35,7 +35,7 @@ export function createAuthRoutes({ database, sessionSecret }) {
     },
   )
 
-  router.post('/logout', requireCashier, async (request, response) => {
+  router.post('/logout', requireAuthenticatedUser, async (request, response) => {
     await logout({ database, sessionId: request.auth.sessionId })
     response.status(204).end()
   })

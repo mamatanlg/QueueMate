@@ -4,7 +4,10 @@ import test from 'node:test'
 import {
   callNext,
   finishCurrentTicket,
+  getCashierWindow,
+  getPublicQueue,
   getTicketStatus,
+  getWaitingQueue,
   issueTicket,
   setWindowAvailability,
 } from '../src/services/queue-service.js'
@@ -74,13 +77,15 @@ class ConcurrentQueueDatabase {
               .map((ticket) => ({ id: ticket.id })),
           }
         }
-        if (sql.includes('ORDER BY q.business_date, q.queue_number')) {
+        if (sql.includes('FOR UPDATE OF q')) {
           let unlock
           const previous = this.queueLock
           this.queueLock = new Promise((resolve) => { unlock = resolve })
           await previous
           client.releaseQueueLock = unlock
-          const ticket = this.tickets.find((item) => item.status === 'waiting')
+          const ticket = this.tickets.find((item) => (
+            item.status === 'waiting' && item.business_date === '2026-11-13'
+          ))
           return { rows: ticket ? [{ ...ticket, transaction_type: 'SOA' }] : [] }
         }
         if (sql.includes("SET status = 'serving'")) {
@@ -184,6 +189,87 @@ test('ticket status requires its access token and hides the window until called'
   assert.equal(response.ticketNumber, '001')
 })
 
+test('public waiting counts and window current tickets are scoped to the Manila business date', async () => {
+  const queryCalls = []
+  const database = {
+    async query(sql) {
+      queryCalls.push(sql)
+      return {
+        rows: [{
+          business_date: '2026-11-13',
+          latest_number: 2,
+          waiting_count: 1,
+          windows: [{
+            windowNumber: 1,
+            status: 'available',
+            currentTicketNumber: null,
+          }],
+        }],
+      }
+    },
+  }
+
+  const response = await getPublicQueue({ database })
+
+  assert.equal(response.waitingCount, 1)
+  assert.equal(response.windows[0].currentTicketNumber, null)
+  assert.match(queryCalls[0], /business_date = \(SELECT day FROM business_day\)/)
+  assert.match(queryCalls[0], /q\.business_date = \(SELECT day FROM business_day\)/)
+})
+
+test('cashier waiting queue is scoped to the Manila business date', async () => {
+  let query
+  const database = {
+    async query(sql) {
+      query = sql
+      return {
+        rows: [{
+          business_date: '2026-11-13',
+          queue_number: 2,
+          transaction_type: 'SOA',
+          issued_at: '2026-11-13T00:00:00.000Z',
+        }],
+      }
+    },
+  }
+
+  const response = await getWaitingQueue({ database })
+
+  assert.equal(response.length, 1)
+  assert.equal(response[0].ticketNumber, '002')
+  assert.match(query, /business_date = \(SELECT day FROM business_day\)/)
+  assert.match(query, /ORDER BY q\.queue_number/)
+})
+
+test('cashier window response includes the business dates used to identify stale current tickets', async () => {
+  const auth = {
+    username: 'cashier1',
+    display_name: 'Cashier One',
+    assigned_window_id: 'window-1',
+  }
+  const database = {
+    async query(sql) {
+      assert.match(sql, /Asia\/Manila/)
+      return {
+        rows: [{
+          business_date: '2026-11-13',
+          window_number: 1,
+          window_name: 'Window 1',
+          availability_status: 'available',
+          current_queue_number: 3,
+          current_ticket_business_date: '2026-11-12',
+          current_transaction_type: 'Payment',
+        }],
+      }
+    },
+  }
+
+  const response = await getCashierWindow({ database, auth })
+
+  assert.equal(response.window.businessDate, '2026-11-13')
+  assert.equal(response.window.currentTicketBusinessDate, '2026-11-12')
+})
+
 test('call next locks and claims the oldest waiting ticket, then alerts N-5', async () => {
   const auth = cashierAuth()
   const windowId = auth.assigned_window_id
@@ -196,12 +282,15 @@ test('call next locks and claims the oldest waiting ticket, then alerts N-5', as
       availability_status: 'available',
     }] },
     { match: /status = 'serving'[\s\S]*FOR UPDATE/ },
-    { match: /ORDER BY q\.business_date, q\.queue_number[\s\S]*FOR UPDATE OF q/, rows: [{
+    {
+      match: /business_date = \(NOW\(\) AT TIME ZONE 'Asia\/Manila'\)::date[\s\S]*ORDER BY q\.queue_number[\s\S]*FOR UPDATE OF q/,
+      rows: [{
       id: ticketId,
       business_date: '2026-11-13',
       queue_number: 5,
       transaction_type: 'Payment',
-    }] },
+      }],
+    },
     { match: /SET status = 'serving'/ },
     { match: /INSERT INTO queue_history/ },
     { match: /VALUES \(\$1, 'called'\)/, rows: [{ id: randomUUID() }] },
@@ -225,7 +314,7 @@ test('call next locks and claims the oldest waiting ticket, then alerts N-5', as
     status: 'serving',
     windowNumber: 2,
   })
-  const nextQuery = database.calls.find(({ sql }) => sql.includes('ORDER BY q.business_date'))
+  const nextQuery = database.calls.find(({ sql }) => sql.includes('FOR UPDATE OF q'))
   assert.match(nextQuery.sql, /LIMIT 1\s+FOR UPDATE OF q/)
   assert.doesNotMatch(nextQuery.sql, /SKIP LOCKED/)
   assert.deepEqual(events.map(({ event }) => event), [
@@ -242,6 +331,28 @@ test('call next locks and claims the oldest waiting ticket, then alerts N-5', as
     false,
   )
   database.assertDone()
+})
+
+test('call next selects only tickets from the current Manila business date', async () => {
+  const database = new ConcurrentQueueDatabase()
+  database.tickets.unshift({
+    id: 'yesterday-ticket',
+    business_date: '2026-11-12',
+    queue_number: 99,
+    status: 'waiting',
+  })
+
+  const result = await callNext({
+    database,
+    auth: { staff_id: 'staff-2', assigned_window_id: 'window-2' },
+  })
+
+  assert.equal(result.businessDate, '2026-11-13')
+  assert.equal(result.ticketNumber, '001')
+  assert.equal(
+    database.tickets.find(({ id }) => id === 'yesterday-ticket').status,
+    'waiting',
+  )
 })
 
 test('concurrent cashiers receive distinct tickets in oldest-first order', async () => {
@@ -288,6 +399,31 @@ test('a cashier cannot call another ticket while their window has a serving tick
   database.assertDone()
 })
 
+test('a prior-business-date serving ticket cannot be completed or skipped automatically', async () => {
+  const auth = cashierAuth()
+  const database = new ScriptedDatabase([
+    { rows: [{ id: auth.assigned_window_id, window_number: 4 }] },
+    { rows: [{
+      id: randomUUID(),
+      business_date: '2026-11-12',
+      current_business_date: '2026-11-13',
+      queue_number: 5,
+    }] },
+  ])
+
+  await assert.rejects(
+    finishCurrentTicket({ database, auth, action: 'completed' }),
+    (error) => error.status === 409
+      && error.message === 'Previous-business-date tickets require administrative resolution',
+  )
+  assert.equal(
+    database.calls.some(({ sql }) => /SET status = \$2/.test(sql)),
+    false,
+  )
+  assert.equal(database.calls.at(-1).sql, 'ROLLBACK')
+  database.assertDone()
+})
+
 test('an unavailable cashier window cannot claim a waiting ticket', async () => {
   const auth = cashierAuth()
   const database = new ScriptedDatabase([
@@ -315,6 +451,7 @@ test('skipping completes only the assigned window current ticket and creates no 
       id: ticketId,
       business_date: '2026-11-13',
       queue_number: 5,
+      current_business_date: '2026-11-13',
     }] },
     { match: /skipped_at = NOW\(\)/, values: [ticketId, 'skipped'] },
     { match: /'serving', \$4, \$5::jsonb/ },
@@ -345,6 +482,7 @@ test('completing a current ticket records completion and emits the public event'
       id: ticketId,
       business_date: '2026-11-13',
       queue_number: 2,
+      current_business_date: '2026-11-13',
     }] },
     { match: /completed_at = NOW\(\)/ },
     { match: /'serving', \$4, \$5::jsonb/ },

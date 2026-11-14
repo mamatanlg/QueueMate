@@ -545,3 +545,42 @@
 .cashier-demo-hint strong, .cashier-demo-hint p, .cashier-demo-hint code { color: #173CCB; }
 .cashier-login .cashier-eyebrow--light { color: #173CCB; }
 .cashier-device-restriction { background: #fff; color: #173CCB; }
+.cashier-live-label > span { background: #173CCB; }
+.cashier-api-error {
+  margin-bottom: 14px;
+  padding: 11px 14px;
+  border: 1px solid #E7A8A8;
+  border-radius: 8px;
+  background: #FFF4F4;
+  color: #9D3030;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.cashier-api-loading {
+  margin-bottom: 14px;
+  padding: 10px 13px;
+  border-left: 3px solid #FFD52A;
+  background: #FFFBE8;
+  color: #52628D;
+  font-size: 10px;
+}
+.cashier-stale-ticket-warning {
+  padding: 10px;
+  border-radius: 7px;
+  background: #FFFBE8;
+  color: #52628D;
+  line-height: 1.5;
+}
+.cashier-queue-foot__dot--live { background: #173CCB; }
+.cashier-availability-button:disabled { cursor: not-allowed; opacity: .6; }
+.cashier-form__notice {
+  margin-top: 15px;
+  padding: 10px 12px;
+  border: 1px solid #C6D3F5;
+  border-radius: 8px;
+  background: #EDF2FF;
+  color: #173CCB;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.cashier-form__submit:disabled { cursor: wait; opacity: .7; }

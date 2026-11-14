@@ -27,8 +27,10 @@ export async function login({ database, username, password, sessionSecret }) {
     throw new HttpError(401, 'Invalid username or password')
   }
 
-  if (staff.role !== 'cashier' || !staff.assigned_window_id) {
-    throw new HttpError(403, 'This account cannot access cashier operations')
+  const isCashier = staff.role === 'cashier' && Boolean(staff.assigned_window_id)
+  const isAdmin = staff.role === 'admin' && staff.assigned_window_id === null
+  if (!isCashier && !isAdmin) {
+    throw new HttpError(403, 'Account role or window assignment is invalid')
   }
 
   const sessionId = randomUUID()
@@ -56,14 +58,24 @@ export async function login({ database, username, password, sessionSecret }) {
     accessToken: token,
     tokenType: 'Bearer',
     expiresIn: sessionDurationSeconds,
-    cashier: {
-      username: staff.username,
-      displayName: staff.display_name,
-      window: {
-        number: staff.window_number,
-        name: staff.window_name,
-      },
-    },
+    role: staff.role,
+    ...(isCashier
+      ? {
+          cashier: {
+            username: staff.username,
+            displayName: staff.display_name,
+            window: {
+              number: staff.window_number,
+              name: staff.window_name,
+            },
+          },
+        }
+      : {
+          admin: {
+            username: staff.username,
+            displayName: staff.display_name,
+          },
+        }),
   }
 }
 
