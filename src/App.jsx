@@ -1,28 +1,18 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { SocketProvider } from './context/SocketContext'
-import ThemeApplier from './components/ThemeApplier'
-import Landing from './pages/Landing/Landing'
-import Dashboard from './pages/Dashboard/Dashboard'
-import Display from './pages/Display/Display'
-import Admin from './pages/Admin/Admin'
-import Kiosk from './pages/Kiosk/Kiosk'
-import Track from './pages/Track/Track'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import Cashier from './pages/Cashier/Cashier'
+import StudentMobile from './pages/StudentMobile/StudentMobile'
+import PublicDisplay from './pages/PublicDisplay/PublicDisplay'
 
 export default function App() {
   return (
-    <SocketProvider>
-      <ThemeApplier />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Landing />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/display" element={<Display />} />
-          <Route path="/admin" element={<Admin />} />
-          <Route path="/kiosk" element={<Kiosk />} />
-          <Route path="/track" element={<Track />} />
-          <Route path="/track/:ticketNumber" element={<Track />} />
-        </Routes>
-      </BrowserRouter>
-    </SocketProvider>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/cashier" element={<Cashier />} />
+        <Route path="/display" element={<PublicDisplay />} />
+        <Route path="/mobile" element={<StudentMobile />} />
+        <Route path="/" element={<Navigate to="/cashier" replace />} />
+        <Route path="*" element={<Navigate to="/cashier" replace />} />
+      </Routes>
+    </BrowserRouter>
   )
 }
