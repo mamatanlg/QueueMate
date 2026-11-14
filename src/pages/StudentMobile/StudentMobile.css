@@ -1,0 +1,149 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
+
+.student-mobile {
+  --mobile-blue: #173CCB;
+  --mobile-yellow: #FFD52A;
+  min-height: 100dvh;
+  height: 100dvh;
+  overflow-y: auto;
+  background: #edf2ff;
+  color: var(--mobile-blue);
+  font-family: Inter, sans-serif;
+}
+
+.student-mobile__phone {
+  width: min(100%, 480px);
+  min-height: 100%;
+  margin: 0 auto;
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  background: #fff;
+  box-shadow: 0 0 32px #173ccB12;
+}
+
+.student-mobile__header {
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 20px;
+  background: var(--mobile-blue);
+  color: #fff;
+}
+
+.student-mobile__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #fff;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -.5px;
+}
+
+.student-mobile__brand > span:last-child > span { color: var(--mobile-yellow); }
+.student-mobile__brand-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; background: var(--mobile-yellow); color: var(--mobile-blue); font-size: 18px; }
+.student-mobile__school { color: #fff; font-size: 8px; font-weight: 700; letter-spacing: .75px; text-align: right; }
+.student-mobile__screen { display: flex; flex-direction: column; padding: 24px 22px 28px; }
+.student-mobile__back { align-self: flex-start; min-height: 38px; margin: -7px 0 12px -8px; padding: 6px 8px; color: var(--mobile-blue); font-size: 13px; font-weight: 700; }
+.student-mobile__intro { margin: 20px 0 24px; }
+.student-mobile__eyebrow { color: #173CCB; font-size: 10px; font-weight: 800; letter-spacing: 1.15px; }
+.student-mobile__intro h1, .student-mobile__monitor-title { margin-top: 7px; color: var(--mobile-blue); font-family: 'DM Sans', sans-serif; font-size: clamp(26px, 7vw, 32px); font-weight: 800; line-height: 1.15; letter-spacing: -.7px; }
+.student-mobile__intro p { margin-top: 9px; color: #52628D; font-size: 14px; line-height: 1.55; }
+.student-mobile__welcome-mark { width: 68px; height: 68px; display: grid; place-items: center; margin-top: 21px; border-radius: 20px; background: #FFF4C2; color: var(--mobile-blue); font-size: 38px; font-weight: 700; }
+
+.student-mobile__button {
+  width: 100%;
+  min-height: 54px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 800;
+  transition: background .15s ease, transform .15s ease, border-color .15s ease;
+}
+
+.student-mobile__button:active { transform: translateY(1px); }
+.student-mobile__button:focus-visible, .student-mobile__text-button:focus-visible, .student-mobile__back:focus-visible, .student-mobile__toggle:focus-visible { outline: 3px solid #173CCB70; outline-offset: 2px; }
+.student-mobile__button--primary { background: var(--mobile-blue); color: #fff; }
+.student-mobile__button--primary:hover:not(:disabled) { background: #102FAE; }
+.student-mobile__button--primary:disabled { cursor: not-allowed; background: #dce3f6; color: #7583aa; }
+.student-mobile__button--secondary { border-color: #173CCB; background: #fff; color: var(--mobile-blue); }
+.student-mobile__button--secondary:hover { background: #f3f6ff; }
+.student-mobile__button > span { font-size: 20px; line-height: 1; }
+.student-mobile__divider { display: flex; align-items: center; gap: 12px; margin: 21px 0; color: #7582a4; font-size: 10px; font-weight: 700; }
+.student-mobile__divider::before, .student-mobile__divider::after { height: 1px; flex: 1; background: #e2e8f5; content: ''; }
+.student-mobile__privacy { margin-top: 20px; color: #7582a4; font-size: 11px; line-height: 1.5; text-align: center; }
+
+.student-mobile__camera { position: relative; height: min(60vh, 380px); min-height: 280px; display: grid; place-items: center; overflow: hidden; border-radius: 16px; background: #101d52; }
+.student-mobile__camera video { width: 100%; height: 100%; min-height: 280px; position: absolute; inset: 0; object-fit: cover; }
+.student-mobile__camera-frame { position: relative; z-index: 1; width: min(62vw, 220px); aspect-ratio: 1; border: 3px solid var(--mobile-yellow); border-radius: 22px; box-shadow: 0 0 0 999px #09164338; pointer-events: none; }
+.student-mobile__camera-hint { position: absolute; bottom: 17px; z-index: 1; padding: 7px 10px; border-radius: 99px; background: #101d52cc; color: #fff; font-size: 11px; }
+.student-mobile__message { margin: 14px 0; padding: 12px; border-radius: 10px; font-size: 12px; line-height: 1.5; }
+.student-mobile__message--error { border: 1px solid #e8b3ab; background: #fff3f1; color: #8d3026; }
+.student-mobile__text-button { min-height: 44px; margin-top: 12px; color: var(--mobile-blue); font-size: 13px; font-weight: 800; text-align: center; }
+
+.student-mobile__form { display: grid; gap: 11px; }
+.student-mobile__form label { color: var(--mobile-blue); font-size: 12px; font-weight: 800; }
+.student-mobile__form input { width: 100%; height: 54px; padding: 0 14px; border: 1px solid #cbd6f0; border-radius: 10px; outline: none; background: #fff; color: var(--mobile-blue); font: inherit; font-size: 16px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+.student-mobile__form input::placeholder { color: #8b97b7; font-size: 14px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.student-mobile__form input:focus { border-color: var(--mobile-blue); box-shadow: 0 0 0 3px #173CCB20; }
+.student-mobile__form .student-mobile__button { margin-top: 9px; }
+
+.student-mobile__transaction-list { display: grid; gap: 10px; margin: 3px 0 24px; }
+.student-mobile__transaction { min-height: 60px; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid #dce4f5; border-radius: 11px; background: #fff; color: var(--mobile-blue); font-size: 14px; font-weight: 700; text-align: left; }
+.student-mobile__transaction > span:nth-child(2) { flex: 1; }
+.student-mobile__transaction > span:last-child { color: #7582a4; font-size: 22px; }
+.student-mobile__transaction.is-selected { border: 2px solid var(--mobile-blue); background: #f4f7ff; }
+.student-mobile__transaction-radio { width: 19px; height: 19px; display: grid; flex: 0 0 auto; place-items: center; border: 2px solid #9aabd7; border-radius: 50%; }
+.student-mobile__transaction.is-selected .student-mobile__transaction-radio { border-color: var(--mobile-blue); }
+.student-mobile__transaction.is-selected .student-mobile__transaction-radio::after { width: 9px; height: 9px; border-radius: 50%; background: var(--mobile-blue); content: ''; }
+
+.student-mobile__ticket-number, .student-mobile__monitor-number { margin: 13px 0 17px; color: var(--mobile-blue); font-family: 'DM Sans', sans-serif; font-size: clamp(74px, 21vw, 104px); font-weight: 800; letter-spacing: 2px; line-height: 1; text-align: center; }
+.student-mobile__ticket-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 14px; border-radius: 10px; background: #EDF2FF; color: var(--mobile-blue); font-size: 13px; }
+.student-mobile__ticket-summary strong { padding: 5px 8px; border-radius: 99px; background: var(--mobile-yellow); font-size: 10px; text-transform: uppercase; }
+.student-mobile__assigned { display: flex; justify-content: space-between; gap: 8px; margin: 11px 0; padding: 12px 2px; border-bottom: 1px solid #e5eaf5; color: #52628D; font-size: 12px; }
+.student-mobile__assigned strong { color: var(--mobile-blue); text-align: right; }
+.student-mobile__windows { display: grid; gap: 8px; margin: 17px 0; }
+.student-mobile__windows h2, .student-mobile__alert-settings h2 { margin-bottom: 3px; color: var(--mobile-blue); font-family: 'DM Sans', sans-serif; font-size: 16px; font-weight: 800; }
+.student-mobile__window-row { min-height: 44px; display: grid; grid-template-columns: minmax(0, 1fr) 54px 84px; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid #e0e7f5; border-radius: 8px; background: #fff; color: var(--mobile-blue); font-size: 11px; }
+.student-mobile__window-row > strong { font-size: 12px; }
+.student-mobile__window-ticket { font-family: 'DM Sans', sans-serif; font-size: 18px; font-weight: 800; text-align: center; }
+.student-mobile__window-status { color: #52628D; font-size: 9px; font-weight: 700; text-align: right; text-transform: uppercase; }
+.student-mobile__window-status.is-unavailable { color: #7582a4; }
+.student-mobile__instructions { margin: 0 0 18px; padding: 12px; border-left: 4px solid var(--mobile-yellow); border-radius: 4px 8px 8px 4px; background: #fff9db; color: #173CCB; font-size: 12px; line-height: 1.5; }
+
+.student-mobile__monitor-title { margin-bottom: 0; text-align: center; }
+.student-mobile__monitor-number { margin: 8px 0 12px; }
+.student-mobile__turn-alert { display: grid; gap: 5px; margin-top: 14px; padding: 14px; border: 2px solid #e9bd00; border-radius: 11px; background: #FFF4C2; color: var(--mobile-blue); }
+.student-mobile__turn-alert strong { font-family: 'DM Sans', sans-serif; font-size: 15px; }
+.student-mobile__turn-alert span { font-size: 12px; }
+.student-mobile__alert-settings { margin: 3px 0 8px; padding: 13px; border: 1px solid #dce4f5; border-radius: 11px; background: #f8faff; }
+.student-mobile__alert-settings p { margin-top: 5px; color: #52628D; font-size: 11px; line-height: 1.5; }
+.student-mobile__alert-settings > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 11px; }
+.student-mobile__toggle { min-height: 42px; padding: 7px; border: 1px solid #173CCB; border-radius: 8px; background: #fff; color: var(--mobile-blue); font-size: 11px; font-weight: 800; }
+.student-mobile__toggle.is-enabled { border-color: var(--mobile-yellow); background: var(--mobile-yellow); }
+.student-mobile__feedback { color: var(--mobile-blue) !important; }
+.student-mobile__desktop-restriction { display: none; }
+
+@media (min-width: 768px) {
+  .student-mobile { min-height: 100vh; height: 100vh; display: grid; place-items: center; padding: 24px; background: #fff; }
+  .student-mobile__phone { display: none; }
+  .student-mobile__desktop-restriction { display: block; color: #173CCB; font-family: Inter, sans-serif; font-size: 18px; font-weight: 700; text-align: center; }
+}
+
+@media (max-width: 360px) {
+  .student-mobile__header { padding: 0 15px; }
+  .student-mobile__screen { padding-right: 17px; padding-left: 17px; }
+  .student-mobile__school { font-size: 7px; }
+  .student-mobile__window-row { grid-template-columns: minmax(0, 1fr) 46px 76px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .student-mobile *, .student-mobile *::before, .student-mobile *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
