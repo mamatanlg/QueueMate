@@ -66,6 +66,16 @@ class ConcurrentQueueDatabase {
           client.releaseQueueLock = null
           return { rows: [] }
         }
+        if (sql.includes('FROM staff') && sql.includes("role = 'cashier'")) {
+          const staffId = values[0]
+          return {
+            rows: [{
+              id: staffId,
+              is_active: true,
+              assigned_window_id: staffId === 'staff-2' ? 'window-2' : 'window-3',
+            }],
+          }
+        }
         if (sql.includes('FROM cashier_windows')) {
           const window = this.windows.get(values[0])
           return { rows: [{ ...window, availability_status: 'available' }] }
@@ -108,6 +118,18 @@ function cashierAuth() {
   return {
     staff_id: randomUUID(),
     assigned_window_id: randomUUID(),
+  }
+}
+
+function cashierLockResponse(auth) {
+  return {
+    match: /FROM staff[\s\S]*role = 'cashier'[\s\S]*FOR UPDATE/,
+    values: [auth.staff_id],
+    rows: [{
+      id: auth.staff_id,
+      is_active: true,
+      assigned_window_id: auth.assigned_window_id,
+    }],
   }
 }
 
@@ -276,6 +298,7 @@ test('call next locks and claims the oldest waiting ticket, then alerts N-5', as
   const ticketId = randomUUID()
   const targetTicketId = randomUUID()
   const database = new ScriptedDatabase([
+    cashierLockResponse(auth),
     { match: /FROM cashier_windows[\s\S]*FOR UPDATE/, rows: [{
       id: windowId,
       window_number: 2,
@@ -382,6 +405,7 @@ test('concurrent cashiers receive distinct tickets in oldest-first order', async
 test('a cashier cannot call another ticket while their window has a serving ticket', async () => {
   const auth = cashierAuth()
   const database = new ScriptedDatabase([
+    cashierLockResponse(auth),
     { rows: [{
       id: auth.assigned_window_id,
       window_number: 1,
@@ -402,6 +426,7 @@ test('a cashier cannot call another ticket while their window has a serving tick
 test('a prior-business-date serving ticket cannot be completed or skipped automatically', async () => {
   const auth = cashierAuth()
   const database = new ScriptedDatabase([
+    cashierLockResponse(auth),
     { rows: [{ id: auth.assigned_window_id, window_number: 4 }] },
     { rows: [{
       id: randomUUID(),
@@ -427,6 +452,7 @@ test('a prior-business-date serving ticket cannot be completed or skipped automa
 test('an unavailable cashier window cannot claim a waiting ticket', async () => {
   const auth = cashierAuth()
   const database = new ScriptedDatabase([
+    cashierLockResponse(auth),
     { rows: [{
       id: auth.assigned_window_id,
       window_number: 3,
@@ -446,6 +472,7 @@ test('skipping completes only the assigned window current ticket and creates no 
   const auth = cashierAuth()
   const ticketId = randomUUID()
   const database = new ScriptedDatabase([
+    cashierLockResponse(auth),
     { rows: [{ id: auth.assigned_window_id, window_number: 4 }] },
     { rows: [{
       id: ticketId,
@@ -468,8 +495,8 @@ test('skipping completes only the assigned window current ticket and creates no 
   assert.equal(response.windowNumber, 4)
   assert.deepEqual(events.map(({ event }) => event), ['ticket:skipped'])
   assert.equal(database.calls.some(({ sql }) => sql.includes('INSERT INTO notifications')), false)
-  assert.equal(database.calls[3].values[0], ticketId)
-  assert.equal(database.calls[3].values[1], 'skipped')
+  assert.equal(database.calls[4].values[0], ticketId)
+  assert.equal(database.calls[4].values[1], 'skipped')
   database.assertDone()
 })
 
@@ -477,6 +504,7 @@ test('completing a current ticket records completion and emits the public event'
   const auth = cashierAuth()
   const ticketId = randomUUID()
   const database = new ScriptedDatabase([
+    cashierLockResponse(auth),
     { rows: [{ id: auth.assigned_window_id, window_number: 1 }] },
     { rows: [{
       id: ticketId,
@@ -503,6 +531,7 @@ test('completing a current ticket records completion and emits the public event'
 test('window availability updates use the session-bound assigned window', async () => {
   const auth = cashierAuth()
   const database = new ScriptedDatabase([
+    cashierLockResponse(auth),
     { rows: [{
       id: auth.assigned_window_id,
       window_number: 2,

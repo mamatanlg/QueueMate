@@ -16,6 +16,27 @@ function emit(publicEvent, name, payload) {
   publicEvent?.(name, payload)
 }
 
+async function lockCashierWindow(client, auth) {
+  const result = await client.query(
+    `SELECT id, is_active, assigned_window_id
+     FROM staff
+     WHERE id = $1 AND role = 'cashier'
+     FOR UPDATE`,
+    [auth.staff_id],
+  )
+  const cashier = result.rows[0]
+  if (!cashier || !cashier.is_active) {
+    throw new HttpError(401, 'Cashier account is inactive')
+  }
+  if (!cashier.assigned_window_id) {
+    throw new HttpError(409, 'Select an available window before using the queue')
+  }
+  if (cashier.assigned_window_id !== auth.assigned_window_id) {
+    throw new HttpError(409, 'Window assignment changed; refresh and try again')
+  }
+  return cashier.assigned_window_id
+}
+
 export async function issueTicket({ database, transactionType, publicEvent }) {
   const accessToken = randomBytes(ticketTokenBytes).toString('base64url')
 
@@ -153,6 +174,16 @@ export async function getTicketStatus({ database, ticketId, accessToken }) {
 }
 
 export async function getCashierWindow({ database, auth }) {
+  if (!auth.assigned_window_id) {
+    return {
+      cashier: {
+        username: auth.username,
+        displayName: auth.display_name,
+      },
+      window: null,
+    }
+  }
+
   const result = await database.query(
     `WITH business_day AS (
        SELECT (NOW() AT TIME ZONE 'Asia/Manila')::date AS day
@@ -220,12 +251,13 @@ export async function setWindowAvailability({
   publicEvent,
 }) {
   const result = await withTransaction(database, async (client) => {
+    const assignedWindowId = await lockCashierWindow(client, auth)
     const result = await client.query(
       `SELECT id, window_number, availability_status
        FROM cashier_windows
        WHERE id = $1 AND is_active = true
        FOR UPDATE`,
-      [auth.assigned_window_id],
+      [assignedWindowId],
     )
     const current = result.rows[0]
     if (!current) throw new HttpError(404, 'Assigned window not found')
@@ -258,12 +290,13 @@ export async function setWindowAvailability({
 
 export async function callNext({ database, auth, publicEvent }) {
   const call = await withTransaction(database, async (client) => {
+    const assignedWindowId = await lockCashierWindow(client, auth)
     const windowResult = await client.query(
       `SELECT id, window_number, availability_status
        FROM cashier_windows
        WHERE id = $1 AND is_active = true
        FOR UPDATE`,
-      [auth.assigned_window_id],
+      [assignedWindowId],
     )
     const window = windowResult.rows[0]
     if (!window) throw new HttpError(404, 'Assigned window not found')
@@ -389,12 +422,13 @@ export async function finishCurrentTicket({
   publicEvent,
 }) {
   const ticket = await withTransaction(database, async (client) => {
+    const assignedWindowId = await lockCashierWindow(client, auth)
     const windowResult = await client.query(
       `SELECT id, window_number
        FROM cashier_windows
        WHERE id = $1 AND is_active = true
        FOR UPDATE`,
-      [auth.assigned_window_id],
+      [assignedWindowId],
     )
     const window = windowResult.rows[0]
     if (!window) throw new HttpError(404, 'Assigned window not found')

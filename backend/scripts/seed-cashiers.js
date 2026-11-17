@@ -10,7 +10,7 @@ const expectedCashiers = Array.from({ length: 4 }, (_, index) => ({
   windowNumber: index + 1,
 }))
 
-function readHidden(prompt) {
+export function readHidden(prompt) {
   if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== 'function') {
     throw new Error('Run this seed command in an interactive terminal')
   }

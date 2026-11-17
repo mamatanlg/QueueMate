@@ -6,6 +6,10 @@ const migrationUrl = new URL(
   '../../database/migrations/002_active_cashier_window_assignments.sql',
   import.meta.url,
 )
+const flexibleMigrationUrl = new URL(
+  '../../database/migrations/003_flexible_cashier_window_assignments.sql',
+  import.meta.url,
+)
 
 test('active cashier assignment migration guards conflicts and preserves historical rows', async () => {
   const migration = await readFile(migrationUrl, 'utf8')
@@ -18,4 +22,16 @@ test('active cashier assignment migration guards conflicts and preserves histori
   assert.match(migration, /WHERE role = ''cashier'' AND is_active = true/)
   assert.doesNotMatch(migration, /^\s*(INSERT|UPDATE|DELETE)\s+/im)
   assert.doesNotMatch(migration, /\b(?:FOREIGN KEY|REFERENCES|queue_tickets|queue_history)\b/i)
+})
+
+test('flexible assignment migration permits unassigned cashiers and preserves active-window uniqueness', async () => {
+  const migration = await readFile(flexibleMigrationUrl, 'utf8')
+
+  assert.match(migration, /DROP CONSTRAINT IF EXISTS staff_window_role_check/)
+  assert.match(migration, /role = ''cashier''\s+OR \(role = ''admin'' AND assigned_window_id IS NULL\)/)
+  assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS staff_one_active_cashier_per_window_idx/)
+  assert.match(migration, /WHERE role = ''cashier'' AND is_active = true/)
+  assert.match(migration, /GROUP BY assigned_window_id[\s\S]*HAVING COUNT\(\*\) > 1/)
+  assert.doesNotMatch(migration, /^\s*(INSERT|UPDATE|DELETE)\s+/im)
+  assert.doesNotMatch(migration, /\b(?:REFERENCES|queue_tickets|queue_history)\b/i)
 })

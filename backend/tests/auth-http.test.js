@@ -103,6 +103,18 @@ class AuthHttpDatabase {
         this.calls.push({ sql, values })
         if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] }
 
+        if (sql.includes('FROM staff') && sql.includes("role = 'cashier'")
+          && sql.includes('FOR UPDATE')) {
+          return values[0] === this.staff.id
+            ? {
+              rows: [{
+                id: this.staff.id,
+                is_active: this.staff.is_active,
+                assigned_window_id: this.staff.assigned_window_id,
+              }],
+            }
+            : { rows: [] }
+        }
         if (sql.includes('FROM cashier_windows') && sql.includes('FOR UPDATE')) {
           return values[0] === this.staff.assigned_window_id
             ? {
@@ -219,7 +231,7 @@ test('HTTP login rejects invalid credentials and malformed input', async (t) => 
   assert.equal(invalidInput.status, 400)
   assert.deepEqual(invalidInput.body.error, {
     status: 400,
-    message: 'Request validation failed',
+    message: 'Request validation failed: username',
   })
 })
 
@@ -440,4 +452,71 @@ test('isolated HTTP login limiter allows ten requests and rejects the eleventh',
   assert.deepEqual(statuses, [
     400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 429,
   ])
+})
+
+test('login CORS preflight accepts the supported Vite origins and rejects unrelated origins', async (t) => {
+  const server = await startTestServer({})
+  t.after(() => server.close())
+  const viteOrigins = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:5174',
+    'http://127.0.0.1:5174',
+  ]
+
+  for (const origin of viteOrigins) {
+    const response = await fetch(new URL('/api/v1/auth/login', server.origin), {
+      method: 'OPTIONS',
+      headers: {
+        origin,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type',
+      },
+    })
+
+    assert.equal(response.status, 204, `Expected preflight success for ${origin}`)
+    assert.equal(response.headers.get('access-control-allow-origin'), origin)
+    assert.match(response.headers.get('access-control-allow-methods'), /\bPOST\b/)
+    assert.equal(response.headers.get('access-control-allow-headers'), 'content-type')
+    assert.equal(response.headers.get('access-control-allow-credentials'), null)
+  }
+
+  const rejected = await fetch(new URL('/api/v1/auth/login', server.origin), {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'http://untrusted.example',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type',
+    },
+  })
+
+  assert.equal(rejected.status, 403)
+  assert.equal(rejected.headers.get('access-control-allow-origin'), null)
+})
+
+test('development CORS keeps configured origins alongside local defaults', async () => {
+  const envUrl = new URL('../src/config/env.js', import.meta.url).href
+  const script = `
+    import { config } from ${JSON.stringify(envUrl)};
+    console.log(JSON.stringify(config.clientOrigins));
+  `
+  const { stdout } = await execFileAsync(process.execPath, [
+    '--input-type=module',
+    '-e',
+    script,
+  ], {
+    env: {
+      ...process.env,
+      NODE_ENV: 'development',
+      CLIENT_ORIGINS: ' https://existing.example ,http://custom.local:5555, ',
+    },
+  })
+  const origins = JSON.parse(stdout.trim())
+
+  assert.ok(origins.includes('https://existing.example'))
+  assert.ok(origins.includes('http://custom.local:5555'))
+  assert.ok(origins.includes('http://localhost:5173'))
+  assert.ok(origins.includes('http://127.0.0.1:5173'))
+  assert.ok(origins.includes('http://localhost:5174'))
+  assert.ok(origins.includes('http://127.0.0.1:5174'))
 })

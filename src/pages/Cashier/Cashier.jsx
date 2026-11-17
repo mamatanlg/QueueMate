@@ -184,6 +184,8 @@ function CashierDashboard() {
   const navigate = useNavigate()
   const [account, setAccount] = useState(null)
   const [waiting, setWaiting] = useState([])
+  const [availableWindows, setAvailableWindows] = useState([])
+  const [selectedWindowId, setSelectedWindowId] = useState('')
   const [activity, setActivity] = useState([])
   const [view, setView] = useState('counter')
   const [loading, setLoading] = useState(true)
@@ -197,11 +199,19 @@ function CashierDashboard() {
     if (showLoading) setLoading(true)
     setError('')
     try {
-      const [currentAccount, queue] = await Promise.all([
-        request('/cashier/me'),
-        request('/cashier/queue'),
-      ])
+      const currentAccount = await request('/cashier/me')
       setAccount(currentAccount)
+      if (!currentAccount.window) {
+        const available = await request('/cashier/windows/available')
+        setAvailableWindows(available.windows)
+        setWaiting([])
+        setDataLoaded(true)
+        setNow(new Date())
+        return
+      }
+
+      const queue = await request('/cashier/queue')
+      setAvailableWindows([])
       setWaiting(queue.tickets.map((ticket) => ({
         id: `${ticket.businessDate}-${ticket.ticketNumber}`,
         number: ticket.ticketNumber,
@@ -296,6 +306,46 @@ function CashierDashboard() {
     }
   }
 
+  async function assignWindow() {
+    if (!selectedWindowId) return
+    setPending(true)
+    setError('')
+    try {
+      await request('/cashier/window/assignment', {
+        method: 'PATCH',
+        body: { windowId: selectedWindowId },
+      })
+      setSelectedWindowId('')
+      setNotice('Window selected.')
+      await refresh(false)
+    } catch (assignmentError) {
+      if (assignmentError.status !== 401) setError(assignmentError.message)
+      await refresh(false)
+    } finally {
+      setPending(false)
+    }
+  }
+
+  async function releaseWindow() {
+    if (currentTicket || !window.confirm('Release this window? You can select another available window afterward.')) {
+      return
+    }
+    setPending(true)
+    setError('')
+    try {
+      await request('/cashier/window/assignment', {
+        method: 'PATCH',
+        body: { windowId: null },
+      })
+      setNotice('Window released. Select another available window to continue.')
+      await refresh(false)
+    } catch (assignmentError) {
+      if (assignmentError.status !== 401) setError(assignmentError.message)
+    } finally {
+      setPending(false)
+    }
+  }
+
   async function logout() {
     let message = ''
     try {
@@ -307,6 +357,57 @@ function CashierDashboard() {
       replace: true,
       state: message ? { notice: message } : undefined,
     })
+  }
+
+  if (dataLoaded && account && !windowInfo) {
+    return (
+      <main className="cashier-window-select">
+        <section className="cashier-window-select__card">
+          <Link className="cashier-brand" to="/cashier" aria-label="QueueMate home">
+            <span className="cashier-brand__mark">Q</span>
+            <span>Queue<span>Mate</span></span>
+          </Link>
+          <span className="cashier-eyebrow cashier-eyebrow--light">CASHIER WORKSPACE</span>
+          <h1>Select an available window</h1>
+          <p>Choose an active, unoccupied window to begin working at a counter.</p>
+          {error && <div className="cashier-api-error" role="alert">{error}</div>}
+          {availableWindows.length > 0 ? (
+            <form onSubmit={(event) => { event.preventDefault(); assignWindow() }}>
+              <label htmlFor="cashier-window-choice">Available window</label>
+              <select
+                id="cashier-window-choice"
+                onChange={(event) => setSelectedWindowId(event.target.value)}
+                value={selectedWindowId}
+              >
+                <option value="">Choose a window</option>
+                {availableWindows.map((window) => (
+                  <option key={window.id} value={window.id}>
+                    Window {window.number} · {window.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="cashier-button cashier-button--primary"
+                disabled={!selectedWindowId || pending}
+                type="submit"
+              >
+                {pending ? 'Assigning…' : 'Select window'}
+              </button>
+            </form>
+          ) : (
+            <p className="cashier-window-select__empty">
+              No active windows are currently available. Refresh to check again.
+            </p>
+          )}
+          <div className="cashier-window-select__actions">
+            <button type="button" className="cashier-text-button" onClick={() => refresh()} disabled={loading}>
+              {loading ? 'Refreshing…' : 'Refresh windows'}
+            </button>
+            <button type="button" className="cashier-text-button" onClick={logout}>Log out</button>
+          </div>
+        </section>
+      </main>
+    )
   }
 
   return (
@@ -416,7 +517,20 @@ function CashierDashboard() {
                     <span /> Unavailable
                   </button>
                 </div>
+                <button
+                  className="cashier-text-button"
+                  disabled={pending || Boolean(currentTicket)}
+                  onClick={releaseWindow}
+                  type="button"
+                >
+                  Switch window
+                </button>
               </section>
+              {currentTicket && (
+                <p className="cashier-action-hint">
+                  Finish or skip the current ticket before switching windows.
+                </p>
+              )}
 
               <section className="cashier-stats-grid" aria-label="Available queue statistics">
                 <StatCard label="Waiting today" value={waiting.length} note="live backend queue" tone="queue" />

@@ -171,6 +171,9 @@
 .admin-pill { display: inline-flex; align-items: center; padding: 5px 8px; border-radius: 99px; font-size: 9px; font-weight: 700; }
 .admin-pill--active { background: #EDF2FF; color: #173CCB; }
 .admin-pill--inactive { background: #F1F3F8; color: #52628D; }
+.admin-pill--admin { background: #FFF4C2; color: #173CCB; }
+.admin-pill--cashier { background: #EDF2FF; color: #173CCB; }
+.admin-muted { color: #52628D; font-size: 9px; }
 .admin-row-actions { display: flex; align-items: center; gap: 9px; }
 .admin-empty { padding: 26px 8px; color: #52628D; font-size: 11px; text-align: center; }
 

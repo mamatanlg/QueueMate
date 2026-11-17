@@ -8,7 +8,14 @@ import {
   getWaitingQueue,
   setWindowAvailability,
 } from '../services/queue-service.js'
-import { windowAvailabilitySchema } from '../validation/schemas.js'
+import {
+  listAvailableWindows,
+  setCashierWindowAssignment,
+} from '../services/window-assignment-service.js'
+import {
+  cashierWindowAssignmentSchema,
+  windowAvailabilitySchema,
+} from '../validation/schemas.js'
 
 export function createCashierRoutes({ database, sessionSecret }) {
   const router = Router()
@@ -23,6 +30,24 @@ export function createCashierRoutes({ database, sessionSecret }) {
       await getCashierWindow({ database, auth: request.auth }),
     )
   })
+
+  router.get('/windows/available', async (_request, response) => {
+    response.status(200).json({
+      windows: await listAvailableWindows({ database }),
+    })
+  })
+
+  router.patch(
+    '/window/assignment',
+    validateRequest({ body: cashierWindowAssignmentSchema.shape.body }),
+    async (request, response) => {
+      response.status(200).json(await setCashierWindowAssignment({
+        database,
+        staffId: request.auth.staff_id,
+        windowId: request.validated.body.windowId,
+      }))
+    },
+  )
 
   router.get('/queue', async (_request, response) => {
     response.status(200).json({ tickets: await getWaitingQueue({ database }) })
