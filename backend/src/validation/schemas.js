@@ -47,12 +47,18 @@ export const cashierIdSchema = z.object({
   }).strict(),
 })
 
+export const windowIdSchema = z.object({
+  params: z.object({
+    windowId: z.uuid(),
+  }).strict(),
+})
+
 export const createCashierSchema = z.object({
   body: z.object({
     username: cashierUsernameSchema,
     displayName: cashierDisplayNameSchema,
     password: cashierPasswordSchema,
-    windowId: z.uuid(),
+    windowId: z.uuid().optional(),
   }).strict(),
 })
 
@@ -61,11 +67,17 @@ export const updateCashierSchema = z.object({
     username: cashierUsernameSchema.optional(),
     displayName: cashierDisplayNameSchema.optional(),
     password: cashierPasswordSchema.optional(),
-    windowId: z.uuid().optional(),
+    windowId: z.uuid().nullable().optional(),
   }).strict().refine(
     (body) => Object.values(body).some((value) => value !== undefined),
     { message: 'At least one cashier field must be provided' },
   ),
+})
+
+export const cashierWindowAssignmentSchema = z.object({
+  body: z.object({
+    windowId: z.uuid().nullable(),
+  }).strict(),
 })
 
 export const cashierStatusSchema = z.object({

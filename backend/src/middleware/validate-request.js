@@ -9,7 +9,13 @@ export function validateRequest(schemas) {
       const result = schema.safeParse(request[part])
 
       if (!result.success) {
-        next(new HttpError(400, 'Request validation failed'))
+        const fields = [...new Set(result.error.issues
+          .flatMap((issue) => issue.path)
+          .filter((field) => typeof field === 'string'))]
+        const message = fields.length > 0
+          ? `Request validation failed: ${fields.join(', ')}`
+          : 'Request validation failed'
+        next(new HttpError(400, message))
         return
       }
 

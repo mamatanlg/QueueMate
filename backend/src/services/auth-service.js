@@ -27,7 +27,7 @@ export async function login({ database, username, password, sessionSecret }) {
     throw new HttpError(401, 'Invalid username or password')
   }
 
-  const isCashier = staff.role === 'cashier' && Boolean(staff.assigned_window_id)
+  const isCashier = staff.role === 'cashier'
   const isAdmin = staff.role === 'admin' && staff.assigned_window_id === null
   if (!isCashier && !isAdmin) {
     throw new HttpError(403, 'Account role or window assignment is invalid')
@@ -64,10 +64,12 @@ export async function login({ database, username, password, sessionSecret }) {
           cashier: {
             username: staff.username,
             displayName: staff.display_name,
-            window: {
-              number: staff.window_number,
-              name: staff.window_name,
-            },
+            window: staff.assigned_window_id
+              ? {
+                  number: staff.window_number,
+                  name: staff.window_name,
+                }
+              : null,
           },
         }
       : {

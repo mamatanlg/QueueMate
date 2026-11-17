@@ -53,7 +53,15 @@ const defaultDevelopmentOrigins = [
   'http://127.0.0.1:3000',
   'http://localhost:3002',
   'http://127.0.0.1:3002',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5174',
 ]
+const configuredClientOrigins = env.CLIENT_ORIGINS
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
 
 export const config = Object.freeze({
   nodeEnv: env.NODE_ENV,
@@ -61,9 +69,10 @@ export const config = Object.freeze({
   databaseUrl: env.DATABASE_URL,
   sessionSecret: env.SESSION_SECRET,
   clientOrigins: Object.freeze(
-    env.CLIENT_ORIGINS
-      ? env.CLIENT_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
-      : env.NODE_ENV === 'development' ? defaultDevelopmentOrigins : [],
+    [...new Set([
+      ...(env.NODE_ENV === 'development' ? defaultDevelopmentOrigins : []),
+      ...configuredClientOrigins,
+    ])],
   ),
   isProduction: env.NODE_ENV === 'production',
 })

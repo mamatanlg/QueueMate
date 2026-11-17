@@ -5,7 +5,9 @@ import {
   createCashier,
   getCashier,
   listCashiers,
+  listStaff,
   listWindows,
+  setAdminWindowAvailability,
   setCashierActive,
   updateCashier,
 } from '../services/admin-service.js'
@@ -14,6 +16,8 @@ import {
   cashierStatusSchema,
   createCashierSchema,
   updateCashierSchema,
+  windowAvailabilitySchema,
+  windowIdSchema,
 } from '../validation/schemas.js'
 
 export function createAdminRoutes({ database, sessionSecret }) {
@@ -22,6 +26,10 @@ export function createAdminRoutes({ database, sessionSecret }) {
 
   router.get('/cashiers', async (_request, response) => {
     response.status(200).json({ cashiers: await listCashiers({ database }) })
+  })
+
+  router.get('/staff', async (_request, response) => {
+    response.status(200).json({ staff: await listStaff({ database }) })
   })
 
   router.get(
@@ -81,6 +89,31 @@ export function createAdminRoutes({ database, sessionSecret }) {
   router.get('/windows', async (_request, response) => {
     response.status(200).json({ windows: await listWindows({ database }) })
   })
+
+  router.patch(
+    '/windows/:windowId/status',
+    validateRequest({
+      params: windowIdSchema.shape.params,
+      body: windowAvailabilitySchema.shape.body,
+    }),
+    async (request, response) => {
+      const result = await setAdminWindowAvailability({
+        database,
+        windowId: request.validated.params.windowId,
+        availabilityStatus: request.validated.body.availabilityStatus,
+      })
+      if (result.changed) {
+        request.app.get('io')?.emit('window:updated', {
+          windowNumber: result.windowNumber,
+          status: result.status,
+        })
+      }
+      response.status(200).json({
+        windowNumber: result.windowNumber,
+        status: result.status,
+      })
+    },
+  )
 
   return router
 }

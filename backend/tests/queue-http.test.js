@@ -11,7 +11,11 @@ const cashierPasswordHash = await bcrypt.hash(cashierPassword, 4)
 const businessDate = '2026-11-13'
 
 class QueueHttpDatabase {
-  constructor({ tickets = [], availabilityStatus = 'available' } = {}) {
+  constructor({
+    tickets = [],
+    availabilityStatus = 'available',
+    assignedWindowId = 'window-2',
+  } = {}) {
     this.staff = {
       id: randomUUID(),
       username: 'cashier2',
@@ -19,7 +23,7 @@ class QueueHttpDatabase {
       display_name: 'Cashier Two',
       role: 'cashier',
       is_active: true,
-      assigned_window_id: 'window-2',
+      assigned_window_id: assignedWindowId,
       window_number: 2,
       window_name: 'Window 2',
     }
@@ -46,6 +50,37 @@ class QueueHttpDatabase {
           ? [{ ...this.staff }]
           : [],
       }
+    }
+    if (sql.includes('SELECT w.id, w.window_number, w.window_name')
+      && sql.includes('NOT EXISTS')) {
+      const occupied = this.staff.is_active
+        && this.staff.assigned_window_id === this.window.id
+      return {
+        rows: this.window.is_active
+          && this.window.availability_status === 'available'
+          && !occupied
+          ? [{
+            id: this.window.id,
+            window_number: this.window.window_number,
+            window_name: this.window.window_name,
+          }]
+          : [],
+      }
+    }
+    if (sql.includes('WHERE w.id = $1 AND w.is_active = true')) {
+      return values[0] === this.staff.assigned_window_id
+        ? {
+          rows: [{
+            window_number: this.window.window_number,
+            window_name: this.window.window_name,
+            availability_status: this.window.availability_status,
+            business_date: businessDate,
+            current_queue_number: null,
+            current_ticket_business_date: null,
+            current_transaction_type: null,
+          }],
+        }
+        : { rows: [] }
     }
     if (sql.includes('INSERT INTO auth_sessions')) {
       this.sessions.set(values[0], {
@@ -111,6 +146,20 @@ class QueueHttpDatabase {
     this.calls.push({ sql, values })
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] }
 
+    if (sql.includes('FROM staff') && sql.includes('FOR UPDATE')
+      && sql.includes("role = 'cashier'")) {
+      return this.staff.is_active && values[0] === this.staff.id
+        ? {
+          rows: [{
+            id: this.staff.id,
+            username: this.staff.username,
+            is_active: this.staff.is_active,
+            assigned_window_id: this.staff.assigned_window_id,
+          }],
+        }
+        : { rows: [] }
+    }
+
     if (sql.includes('FROM transaction_types')) {
       const knownTypes = new Map([
         ['SOA', 'type-soa'],
@@ -160,17 +209,24 @@ class QueueHttpDatabase {
     if (sql.includes('INSERT INTO queue_history')) return { rows: [] }
 
     if (sql.includes('FROM cashier_windows') && sql.includes('FOR UPDATE')) {
-      return values[0] === this.window.id && this.window.is_active
-        ? {
-          rows: [{
-            id: this.window.id,
-            window_number: this.window.window_number,
-            availability_status: this.window.availability_status,
-          }],
-        }
+      const ids = Array.isArray(values[0]) ? values[0] : [values[0]]
+      return ids.includes(this.window.id) && this.window.is_active
+        ? { rows: [{
+          id: this.window.id,
+          window_number: this.window.window_number,
+          window_name: this.window.window_name,
+          is_active: this.window.is_active,
+          availability_status: this.window.availability_status,
+        }] }
         : { rows: [] }
     }
-    if (sql.includes('SELECT id FROM queue_tickets')
+    if (sql.includes('assigned_window_id = $1')) {
+      const occupied = this.staff.is_active
+        && this.staff.assigned_window_id === values[0]
+        && this.staff.id !== values[1]
+      return { rows: occupied ? [{ id: this.staff.id }] : [] }
+    }
+    if (/SELECT id\s+FROM queue_tickets/.test(sql)
       && sql.includes("status = 'serving'")) {
       return {
         rows: this.tickets
@@ -179,6 +235,11 @@ class QueueHttpDatabase {
           ))
           .map(({ id }) => ({ id })),
       }
+    }
+    if (sql.includes('UPDATE staff')
+      && sql.includes('SET assigned_window_id = $2')) {
+      this.staff.assigned_window_id = values[1]
+      return { rows: [] }
     }
     if (sql.includes('FOR UPDATE OF q')) {
       const ticket = this.tickets
@@ -494,4 +555,41 @@ test('HTTP Call Next rejects an unavailable window without claiming a ticket', a
     message: 'Window is unavailable',
   })
   assert.equal(database.tickets[0].status, 'waiting')
+})
+
+test('unassigned cashier can list and securely select an available window', async (t) => {
+  const database = new QueueHttpDatabase({ assignedWindowId: null })
+  database.window.id = randomUUID()
+  const { origin } = await createHttpFixture(t, database)
+  const login = await requestJson(origin, '/api/v1/auth/login', {
+    method: 'POST',
+    body: { username: 'cashier2', password: cashierPassword },
+  })
+  assert.equal(login.status, 200)
+  assert.equal(login.body.cashier.window, null)
+  const token = login.body.accessToken
+
+  const profile = await requestJson(origin, '/api/v1/cashier/me', { token })
+  assert.equal(profile.status, 200)
+  assert.equal(profile.body.window, null)
+
+  const available = await requestJson(origin, '/api/v1/cashier/windows/available', { token })
+  assert.equal(available.status, 200)
+  assert.deepEqual(available.body.windows, [{
+    id: database.window.id,
+    number: 2,
+    name: 'Window 2',
+  }])
+
+  const selected = await requestJson(origin, '/api/v1/cashier/window/assignment', {
+    method: 'PATCH',
+    token,
+    body: { windowId: database.window.id },
+  })
+  assert.equal(selected.status, 200)
+  assert.equal(database.staff.assigned_window_id, database.window.id)
+
+  const assignedProfile = await requestJson(origin, '/api/v1/cashier/me', { token })
+  assert.equal(assignedProfile.status, 200)
+  assert.equal(assignedProfile.body.window.name, 'Window 2')
 })

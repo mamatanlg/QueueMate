@@ -68,8 +68,11 @@ class AdminHttpDatabase {
       }),
     ]
     this.sessions = new Map()
+    this.tickets = []
     this.calls = []
     this.snapshot = null
+    this.insertFailure = null
+    this.staffListFailure = null
   }
 
   windowRow(window) {
@@ -151,6 +154,17 @@ class AdminHttpDatabase {
       return { rows: [] }
     }
 
+    if (sql.includes('s.role, s.is_active')) {
+      if (this.staffListFailure) throw this.staffListFailure
+      return {
+        rows: this.staff.map((staff) => ({
+          ...this.cashierRow(staff),
+          role: staff.role,
+          is_active: staff.is_active,
+        })),
+      }
+    }
+
     if (sql.includes('FROM cashier_windows w') && sql.includes('LEFT JOIN staff s')) {
       return {
         rows: this.windows.map((window) => {
@@ -223,8 +237,23 @@ class AdminHttpDatabase {
     }
 
     if (sql.includes('FROM cashier_windows') && sql.includes('FOR UPDATE')) {
-      const window = this.windows.find(({ id }) => id === values[0])
-      return { rows: window ? [this.windowRow(window)] : [] }
+      const ids = Array.isArray(values[0]) ? values[0] : [values[0]]
+      return {
+        rows: this.windows
+          .filter(({ id }) => ids.includes(id))
+          .map((window) => ({
+            ...this.windowRow(window),
+            availability_status: window.availability_status,
+          })),
+      }
+    }
+
+    if (sql.includes('FROM queue_tickets') && sql.includes("status = 'serving'")) {
+      return {
+        rows: this.tickets
+          .filter((ticket) => ticket.window_id === values[0] && ticket.status === 'serving')
+          .map(({ id }) => ({ id })),
+      }
     }
 
     if (sql.includes('FROM staff')
@@ -269,6 +298,7 @@ class AdminHttpDatabase {
     }
 
     if (sql.includes('INSERT INTO staff')) {
+      if (this.insertFailure) throw this.insertFailure
       const [username, passwordHash, displayName, assignedWindowId] = values
       const cashier = makeStaff({
         username,
@@ -286,6 +316,17 @@ class AdminHttpDatabase {
         if (session.staffId === values[0]) session.revoked = true
       }
       return { rows: [] }
+    }
+
+    if (sql.includes('UPDATE cashier_windows')) {
+      const window = this.windows.find(({ id }) => id === values[0])
+      window.availability_status = values[1]
+      return {
+        rows: [{
+          window_number: window.window_number,
+          availability_status: window.availability_status,
+        }],
+      }
     }
 
     if (sql.includes('UPDATE staff')) {
@@ -383,6 +424,10 @@ test('admin endpoints require authentication and reject cashiers', async (t) => 
     token: cashier,
   })
   assert.equal(forbidden.status, 403)
+  const forbiddenStaff = await requestJson(server.origin, '/api/v1/admin/staff', {
+    token: cashier,
+  })
+  assert.equal(forbiddenStaff.status, 403)
 
   const admin = adminToken(database)
   const allowed = await requestJson(server.origin, '/api/v1/admin/cashiers', {
@@ -397,6 +442,44 @@ test('admin endpoints require authentication and reject cashiers', async (t) => 
   })
   assert.equal(windows.status, 200)
   assert.equal(windows.body.windows.length, 4)
+
+  const staff = await requestJson(server.origin, '/api/v1/admin/staff', {
+    token: admin,
+  })
+  assert.equal(staff.status, 200)
+  assert.equal(staff.body.staff.length, 3)
+  assert.deepEqual(new Set(staff.body.staff.map(({ role }) => role)), new Set(['admin', 'cashier']))
+  assert.equal(staff.body.staff[0].username !== undefined, true)
+  assert.equal(staff.body.staff[0].displayName !== undefined, true)
+  assert.equal(staff.body.staff[0].isActive !== undefined, true)
+  assert.equal(staff.body.staff.some((account) => 'password_hash' in account), false)
+})
+
+test('admin can change window availability but cashiers cannot use the admin endpoint', async (t) => {
+  const database = new AdminHttpDatabase()
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+  const window = database.windows[0]
+  const path = `/api/v1/admin/windows/${window.id}/status`
+
+  const updated = await requestJson(server.origin, path, {
+    method: 'PATCH',
+    token: adminToken(database),
+    body: { availabilityStatus: 'available' },
+  })
+  assert.equal(updated.status, 200)
+  assert.deepEqual(updated.body, {
+    windowNumber: 1,
+    status: 'available',
+  })
+  assert.equal(window.availability_status, 'available')
+
+  const forbidden = await requestJson(server.origin, `/api/v1/admin/windows/${database.windows[1].id}/status`, {
+    method: 'PATCH',
+    token: sessionToken(database, 'cashier1'),
+    body: { availabilityStatus: 'available' },
+  })
+  assert.equal(forbidden.status, 403)
 })
 
 test('admin can view cashier details and create a cashier without exposing secrets', async (t) => {
@@ -436,6 +519,58 @@ test('admin can view cashier details and create a cashier without exposing secre
   assert.equal('password_hash' in detail.body, false)
 })
 
+test('admin can create an unassigned cashier and see it in User Management', async (t) => {
+  const database = new AdminHttpDatabase()
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+  const existingStaff = database.staff.map(({
+    id,
+    username,
+    display_name,
+    role,
+    is_active,
+    assigned_window_id,
+  }) => ({ id, username, display_name, role, is_active, assigned_window_id }))
+
+  const created = await requestJson(server.origin, '/api/v1/admin/cashiers', {
+    method: 'POST',
+    token: adminToken(database),
+    body: {
+      username: 'unassigned',
+      displayName: 'Unassigned Cashier',
+      password: 'unassigned-cashier-password',
+    },
+  })
+
+  assert.equal(created.status, 201)
+  assert.equal(created.body.isActive, true)
+  assert.equal(created.body.assignedWindow, null)
+  const listed = await requestJson(server.origin, '/api/v1/admin/staff', {
+    token: adminToken(database),
+  })
+  assert.equal(listed.status, 200)
+  assert.ok(listed.body.staff.some((account) => (
+    account.username === 'unassigned'
+    && account.displayName === 'Unassigned Cashier'
+    && account.role === 'cashier'
+    && account.isActive === true
+    && account.assignedWindow === null
+  )))
+  assert.deepEqual(
+    database.staff
+      .filter(({ id }) => existingStaff.some((existing) => existing.id === id))
+      .map(({
+        id,
+        username,
+        display_name,
+        role,
+        is_active,
+        assigned_window_id,
+      }) => ({ id, username, display_name, role, is_active, assigned_window_id })),
+    existingStaff,
+  )
+})
+
 test('cashier creation rejects duplicate usernames, assignments, admin roles, and invalid windows', async (t) => {
   const database = new AdminHttpDatabase()
   const server = await startTestServer(database)
@@ -454,6 +589,33 @@ test('cashier creation rejects duplicate usernames, assignments, admin roles, an
     },
   })
   assert.equal(duplicateUsername.status, 409)
+  assert.equal(duplicateUsername.body.error.message, 'Username is already in use')
+
+  const missingFields = await requestJson(server.origin, '/api/v1/admin/cashiers', {
+    method: 'POST',
+    token: admin,
+    body: {},
+  })
+  assert.equal(missingFields.status, 400)
+  assert.equal(
+    missingFields.body.error.message,
+    'Request validation failed: username, displayName, password',
+  )
+
+  const invalidFields = await requestJson(server.origin, '/api/v1/admin/cashiers', {
+    method: 'POST',
+    token: admin,
+    body: {
+      username: 'x',
+      displayName: '',
+      password: 'short',
+    },
+  })
+  assert.equal(invalidFields.status, 400)
+  assert.equal(
+    invalidFields.body.error.message,
+    'Request validation failed: username, displayName, password',
+  )
 
   const occupiedWindow = await requestJson(server.origin, '/api/v1/admin/cashiers', {
     method: 'POST',
@@ -506,6 +668,99 @@ test('cashier creation rejects duplicate usernames, assignments, admin roles, an
   assert.equal(database.staff.length, initialCount)
 })
 
+test('cashier creation reports the missing flexible-assignment migration', async (t) => {
+  const database = new AdminHttpDatabase()
+  database.insertFailure = Object.assign(
+    new Error('database details must not be sent to the client'),
+    { code: '23514', constraint: 'staff_window_role_check' },
+  )
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+  const logs = []
+  t.mock.method(console, 'error', (...args) => logs.push(args))
+
+  const response = await requestJson(server.origin, '/api/v1/admin/cashiers', {
+    method: 'POST',
+    token: adminToken(database),
+    body: {
+      username: 'unassigned',
+      displayName: 'Unassigned Cashier',
+      password: 'unassigned-cashier-password',
+    },
+  })
+
+  assert.equal(response.status, 503)
+  assert.match(response.body.error.message, /migrations 002 and 003/)
+  assert.doesNotMatch(response.body.error.message, /database details/)
+  assert.deepEqual(logs, [[
+    'Cashier assignment schema blocks an unassigned account',
+    { code: '23514', constraint: 'staff_window_role_check' },
+  ]])
+  assert.equal(database.staff.length, 3)
+})
+
+test('database username conflicts return a specific duplicate message', async (t) => {
+  const database = new AdminHttpDatabase()
+  database.insertFailure = Object.assign(
+    new Error('unique constraint details'),
+    { code: '23505', constraint: 'staff_username_key' },
+  )
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+
+  const response = await requestJson(server.origin, '/api/v1/admin/cashiers', {
+    method: 'POST',
+    token: adminToken(database),
+    body: {
+      username: 'duplicate-race',
+      displayName: 'Duplicate Race',
+      password: 'duplicate-race-password',
+    },
+  })
+
+  assert.equal(response.status, 409)
+  assert.equal(response.body.error.message, 'Username is already in use')
+  assert.equal(database.staff.length, 3)
+})
+
+test('database read failures return service unavailable and log safe diagnostics', async (t) => {
+  const database = new AdminHttpDatabase()
+  database.staffListFailure = Object.assign(
+    new Error('private database message'),
+    {
+      code: '08006',
+      constraint: 'staff_read_constraint',
+      table: 'staff',
+      column: 'password_hash',
+    },
+  )
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+  const logs = []
+  t.mock.method(console, 'error', (...args) => logs.push(args))
+
+  const response = await requestJson(server.origin, '/api/v1/admin/staff', {
+    token: adminToken(database),
+  })
+
+  assert.equal(response.status, 503)
+  assert.equal(
+    response.body.error.message,
+    'A database operation failed. Please try again; contact an administrator if it continues.',
+  )
+  assert.doesNotMatch(JSON.stringify(response.body), /private database message|password_hash/)
+  assert.deepEqual(logs, [[
+    'Database operation failed',
+    {
+      name: 'Error',
+      code: '08006',
+      constraint: 'staff_read_constraint',
+      table: 'staff',
+      column: 'password_hash',
+    },
+  ]])
+})
+
 test('admin can update cashier details and reassign to an unoccupied window', async (t) => {
   const database = new AdminHttpDatabase()
   const server = await startTestServer(database)
@@ -545,6 +800,41 @@ test('admin can update cashier details and reassign to an unoccupied window', as
     windows.body.windows.find((window) => window.id === database.windows[1].id)
       .assignedCashier.id,
     cashier.id,
+  )
+})
+
+test('admin can release a cashier assignment but cannot release a window with a serving ticket', async (t) => {
+  const database = new AdminHttpDatabase()
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+  const admin = adminToken(database)
+  const cashier = database.staff.find(({ username }) => username === 'cashier1')
+  const path = `/api/v1/admin/cashiers/${cashier.id}`
+
+  database.tickets.push({
+    id: 'serving-ticket',
+    window_id: cashier.assigned_window_id,
+    status: 'serving',
+  })
+  const blocked = await requestJson(server.origin, path, {
+    method: 'PATCH',
+    token: admin,
+    body: { windowId: null },
+  })
+  assert.equal(blocked.status, 409)
+  assert.equal(cashier.assigned_window_id, database.windows[0].id)
+
+  database.tickets = []
+  const released = await requestJson(server.origin, path, {
+    method: 'PATCH',
+    token: admin,
+    body: { windowId: null },
+  })
+  assert.equal(released.status, 200)
+  assert.equal(released.body.assignedWindow, null)
+  assert.equal(
+    database.staff.find(({ id }) => id === cashier.id).assigned_window_id,
+    null,
   )
 })
 
@@ -696,4 +986,28 @@ test('invalid cashier updates do not partially modify the account', async (t) =>
   assert.equal(invalid.status, 409)
   assert.equal(cashier.display_name, originalName)
   assert.equal(cashier.username, 'cashier1')
+})
+
+test('admin receives an actionable error when assigning an inactive cashier', async (t) => {
+  const database = new AdminHttpDatabase()
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+  const retired = database.staff.find(({ username }) => username === 'retired1')
+
+  const response = await requestJson(
+    server.origin,
+    `/api/v1/admin/cashiers/${retired.id}`,
+    {
+      method: 'PATCH',
+      token: adminToken(database),
+      body: { windowId: database.windows[3].id },
+    },
+  )
+
+  assert.equal(response.status, 409)
+  assert.equal(
+    response.body.error.message,
+    'Reactivate the cashier before assigning a window',
+  )
+  assert.equal(retired.assigned_window_id, database.windows[2].id)
 })

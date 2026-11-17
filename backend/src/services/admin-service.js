@@ -1,6 +1,11 @@
 import bcrypt from 'bcrypt'
 import { HttpError } from '../middleware/http-error.js'
 import { withTransaction } from '../db/transaction.js'
+import {
+  assertNoServingTicket,
+  lockAssignableWindow,
+  setCashierWindowInTransaction,
+} from './window-assignment-service.js'
 
 const passwordRounds = 12
 
@@ -87,38 +92,22 @@ async function ensureUsernameAvailable(client, username, staffId = null) {
   }
 }
 
-async function lockAvailableWindow(client, windowId, cashierId = null) {
-  const windowResult = await client.query(
-    `SELECT id, window_number, window_name, is_active
-     FROM cashier_windows
-     WHERE id = $1
-     FOR UPDATE`,
-    [windowId],
-  )
-  const window = windowResult.rows[0]
-  if (!window) throw new HttpError(404, 'Window not found')
-  if (!window.is_active) throw new HttpError(409, 'Window is inactive')
-
-  const assignmentResult = await client.query(
-    `SELECT id
-     FROM staff
-     WHERE role = 'cashier'
-       AND is_active = true
-       AND assigned_window_id = $1
-       AND ($2::uuid IS NULL OR id <> $2)
-     LIMIT 1`,
-    [windowId, cashierId],
-  )
-  if (assignmentResult.rows.length > 0) {
-    throw new HttpError(409, 'Window is assigned to another active cashier')
-  }
-
-  return window
-}
-
-function mapUniqueViolation(error, message) {
+function mapCashierWriteError(error, conflictMessage) {
   if (error?.code === '23505') {
-    throw new HttpError(409, message)
+    if (error.constraint === 'staff_username_key') {
+      throw new HttpError(409, 'Username is already in use')
+    }
+    throw new HttpError(409, conflictMessage)
+  }
+  if (error?.code === '23514' && error.constraint === 'staff_window_role_check') {
+    console.error('Cashier assignment schema blocks an unassigned account', {
+      code: error.code,
+      constraint: error.constraint,
+    })
+    throw new HttpError(
+      503,
+      'The database does not yet support cashiers without a window. Apply migrations 002 and 003, in order.',
+    )
   }
   throw error
 }
@@ -129,6 +118,21 @@ export async function listCashiers({ database }) {
      ORDER BY lower(s.username), s.id`,
   )
   return result.rows.map(mapCashier)
+}
+
+export async function listStaff({ database }) {
+  const result = await database.query(`
+    SELECT s.id, s.username, s.display_name, s.role, s.is_active,
+           s.assigned_window_id, s.created_at, s.updated_at,
+           w.window_number, w.window_name, w.is_active AS window_is_active
+    FROM staff s
+    LEFT JOIN cashier_windows w ON w.id = s.assigned_window_id
+    ORDER BY s.role, lower(s.username), s.id
+  `)
+  return result.rows.map((row) => ({
+    ...mapCashier(row),
+    role: row.role,
+  }))
 }
 
 export async function getCashier({ database, staffId }) {
@@ -147,7 +151,7 @@ export async function createCashier({
 
   try {
     return await withTransaction(database, async (client) => {
-      await lockAvailableWindow(client, windowId)
+      if (windowId) await lockAssignableWindow(client, windowId)
       await ensureUsernameAvailable(client, normalizedUsername)
 
       const result = await client.query(
@@ -155,12 +159,15 @@ export async function createCashier({
            (username, password_hash, display_name, role, assigned_window_id, is_active)
          VALUES ($1, $2, $3, 'cashier', $4, true)
          RETURNING id`,
-        [normalizedUsername, passwordHash, displayName.trim(), windowId],
+        [normalizedUsername, passwordHash, displayName.trim(), windowId ?? null],
       )
       return findCashier(client, result.rows[0].id)
     })
   } catch (error) {
-    mapUniqueViolation(error, 'Username or window assignment conflicts with an existing account')
+    mapCashierWriteError(
+      error,
+      'Cashier window assignment conflicts with an existing account',
+    )
   }
 }
 
@@ -183,11 +190,10 @@ export async function updateCashier({
       if (normalizedUsername !== undefined) {
         await ensureUsernameAvailable(client, normalizedUsername, staffId)
       }
-      if (windowId !== undefined) {
-        if (!cashier.is_active) {
-          throw new HttpError(409, 'Reactivate the cashier before changing their window')
-        }
-        await lockAvailableWindow(client, windowId, staffId)
+      const windowChanged = windowId !== undefined
+        && windowId !== cashier.assigned_window_id
+      if (windowChanged) {
+        await setCashierWindowInTransaction(client, cashier, windowId)
       }
 
       const updates = []
@@ -204,10 +210,6 @@ export async function updateCashier({
         values.push(passwordHash)
         updates.push(`password_hash = $${values.length}`)
       }
-      if (windowId !== undefined) {
-        values.push(windowId)
-        updates.push(`assigned_window_id = $${values.length}`)
-      }
       updates.push('updated_at = NOW()')
       values.push(staffId)
 
@@ -220,7 +222,7 @@ export async function updateCashier({
 
       if (normalizedUsername !== undefined
         || passwordHash !== undefined
-        || (windowId !== undefined && windowId !== cashier.assigned_window_id)) {
+        || windowChanged) {
         await client.query(
           `UPDATE auth_sessions
            SET revoked_at = NOW()
@@ -232,7 +234,7 @@ export async function updateCashier({
       return findCashier(client, staffId)
     })
   } catch (error) {
-    mapUniqueViolation(error, 'Cashier details conflict with an existing account')
+    mapCashierWriteError(error, 'Cashier details conflict with an existing account')
   }
 }
 
@@ -250,11 +252,10 @@ export async function setCashierActive({
     return await withTransaction(database, async (client) => {
       const cashier = await lockCashier(client, staffId)
 
-      if (isActive) {
-        if (!cashier.assigned_window_id) {
-          throw new HttpError(409, 'Cashier has no assigned window')
-        }
-        await lockAvailableWindow(client, cashier.assigned_window_id, staffId)
+      if (isActive && cashier.assigned_window_id) {
+        await lockAssignableWindow(client, cashier.assigned_window_id, staffId)
+      } else if (!isActive && cashier.assigned_window_id) {
+        await assertNoServingTicket(client, cashier.assigned_window_id)
       }
 
       const updated = await client.query(
@@ -277,7 +278,10 @@ export async function setCashierActive({
       return findCashier(client, updated.rows[0].id)
     })
   } catch (error) {
-    mapUniqueViolation(error, 'Cashier window assignment conflicts with an active account')
+    mapCashierWriteError(
+      error,
+      'Cashier window assignment conflicts with an active account',
+    )
   }
 }
 
@@ -299,4 +303,42 @@ export async function listWindows({ database }) {
     throw new HttpError(503, 'All four cashier windows must be configured')
   }
   return result.rows.map(mapWindow)
+}
+
+export async function setAdminWindowAvailability({
+  database,
+  windowId,
+  availabilityStatus,
+}) {
+  return withTransaction(database, async (client) => {
+    const result = await client.query(
+      `SELECT id, window_number, availability_status
+       FROM cashier_windows
+       WHERE id = $1 AND window_number BETWEEN 1 AND 4
+       FOR UPDATE`,
+      [windowId],
+    )
+    const current = result.rows[0]
+    if (!current) throw new HttpError(404, 'Window not found')
+    if (current.availability_status === availabilityStatus) {
+      return {
+        windowNumber: current.window_number,
+        status: current.availability_status,
+        changed: false,
+      }
+    }
+
+    const updated = await client.query(
+      `UPDATE cashier_windows
+       SET availability_status = $2, updated_at = NOW()
+       WHERE id = $1
+       RETURNING window_number, availability_status`,
+      [windowId, availabilityStatus],
+    )
+    return {
+      windowNumber: updated.rows[0].window_number,
+      status: updated.rows[0].availability_status,
+      changed: true,
+    }
+  })
 }

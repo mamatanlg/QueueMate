@@ -6,8 +6,8 @@ import './AdminDashboard.css'
 
 const navigationItems = [
   { id: 'overview', label: 'Overview' },
-  { id: 'cashiers', label: 'Cashier management' },
-  { id: 'windows', label: 'Window management' },
+  { id: 'users', label: 'User Management' },
+  { id: 'windows', label: 'Window Management' },
   { id: 'reports', label: 'Reports' },
 ]
 
@@ -21,7 +21,7 @@ function formatUpdated(value) {
 
 function CashierEditor({
   cashier,
-  cashiers,
+  staffAccounts,
   windows,
   saving,
   onCancel,
@@ -39,7 +39,7 @@ function CashierEditor({
       && (!window.assignedCashier || window.assignedCashier.id === cashier?.id))
   ))
   const inactiveHistory = new Set(
-    cashiers
+    staffAccounts
       .filter((account) => !account.isActive && account.assignedWindow)
       .map((account) => account.assignedWindow.id),
   )
@@ -55,13 +55,13 @@ function CashierEditor({
         windowId,
       }, cashier)
     } catch (saveError) {
-      const duplicateUsername = cashiers.some((account) => (
+      const duplicateUsername = staffAccounts.some((account) => (
         account.id !== cashier?.id
         && account.username.toLowerCase() === username.trim().toLowerCase()
       ))
       const historicalWindow = inactiveHistory.has(windowId)
       setError(
-        saveError.status === 409 && historicalWindow && !duplicateUsername
+        saveError.status === 409 && historicalWindow && !duplicateUsername && windowId
           ? `${saveError.message} If this inactive assignment must be reused, apply migration 002 first.`
           : saveError.message,
       )
@@ -111,26 +111,26 @@ function CashierEditor({
           />
           {cashier && <small>Leave blank to keep the current password.</small>}
         </label>
-        <label>
-          Assigned window
-          <select
-            disabled={Boolean(cashier && !cashier.isActive)}
-            onChange={(event) => setWindowId(event.target.value)}
-            required
-            value={windowId}
-          >
-            <option value="">Choose an unoccupied window</option>
-            {eligibleWindows.map((window) => (
-              <option key={window.id} value={window.id}>
-                Window {window.number}
-                {inactiveHistory.has(window.id) ? ' — previous inactive assignment' : ''}
-              </option>
-            ))}
-          </select>
-          {cashier && !cashier.isActive && (
-            <small>Reactivate this cashier before changing their window.</small>
-          )}
-        </label>
+        {cashier && (
+          <label>
+            Assigned window
+            <select
+              onChange={(event) => setWindowId(event.target.value)}
+              value={windowId}
+            >
+              <option value="">No window assigned</option>
+              {eligibleWindows.map((window) => (
+                <option key={window.id} value={window.id}>
+                  Window {window.number}
+                  {inactiveHistory.has(window.id) ? ' — previous inactive assignment' : ''}
+                </option>
+              ))}
+            </select>
+            {!cashier.isActive && (
+              <small>Reactivate this cashier before assigning a window. An existing assignment can be released.</small>
+            )}
+          </label>
+        )}
       </div>
       {error && <p className="admin-inline-error" role="alert">{error}</p>}
       <div className="admin-editor__actions">
@@ -142,7 +142,14 @@ function CashierEditor({
   )
 }
 
-function WindowCard({ window, cashiers, onAssign, saving }) {
+function WindowCard({
+  window,
+  cashiers,
+  onAssign,
+  onRelease,
+  onAvailabilityChange,
+  saving,
+}) {
   const [staffId, setStaffId] = useState('')
   const eligibleCashiers = cashiers.filter((cashier) => cashier.isActive)
 
@@ -166,6 +173,17 @@ function WindowCard({ window, cashiers, onAssign, saving }) {
         <span className={`admin-status-dot ${window.availabilityStatus === 'available' ? 'is-available' : ''}`} />
         {window.availabilityStatus === 'available' ? 'Available' : 'Unavailable'}
       </p>
+      <button
+        className="admin-button admin-button--secondary"
+        disabled={saving}
+        onClick={() => onAvailabilityChange(
+          window.id,
+          window.availabilityStatus === 'available' ? 'unavailable' : 'available',
+        )}
+        type="button"
+      >
+        Mark {window.availabilityStatus === 'available' ? 'unavailable' : 'available'}
+      </button>
       <div className="admin-window-card__assignment">
         <span className="admin-eyebrow">ASSIGNED CASHIER</span>
         {window.assignedCashier ? (
@@ -175,6 +193,16 @@ function WindowCard({ window, cashiers, onAssign, saving }) {
           </div>
         ) : (
           <p className="admin-unassigned">No active cashier assigned</p>
+        )}
+        {window.assignedCashier && (
+          <button
+            className="admin-text-button"
+            disabled={saving}
+            onClick={() => onRelease(window.assignedCashier.id, window.id)}
+            type="button"
+          >
+            Release assignment
+          </button>
         )}
       </div>
       {window.isActive && !window.assignedCashier && eligibleCashiers.length > 0 && (
@@ -229,7 +257,7 @@ export default function AdminDashboard() {
   const { session, request, signOut } = useAuth()
   const navigate = useNavigate()
   const [view, setView] = useState('overview')
-  const [cashiers, setCashiers] = useState([])
+  const [staffAccounts, setStaffAccounts] = useState([])
   const [windows, setWindows] = useState([])
   const [loading, setLoading] = useState(true)
   const [dataLoaded, setDataLoaded] = useState(false)
@@ -244,11 +272,11 @@ export default function AdminDashboard() {
     setLoading(true)
     setError('')
     try {
-      const [cashierResponse, windowResponse] = await Promise.all([
-        request('/admin/cashiers'),
+      const [staffResponse, windowResponse] = await Promise.all([
+        request('/admin/staff'),
         request('/admin/windows'),
       ])
-      setCashiers(cashierResponse.cashiers)
+      setStaffAccounts(staffResponse.staff)
       setWindows(windowResponse.windows)
       setDataLoaded(true)
     } catch (loadError) {
@@ -262,6 +290,10 @@ export default function AdminDashboard() {
     refresh()
   }, [refresh])
 
+  const cashiers = useMemo(
+    () => staffAccounts.filter((account) => account.role === 'cashier'),
+    [staffAccounts],
+  )
   const activeCashiers = useMemo(
     () => cashiers.filter((cashier) => cashier.isActive).length,
     [cashiers],
@@ -278,7 +310,7 @@ export default function AdminDashboard() {
   const pageTitle = navigationItems.find((item) => item.id === view)?.label ?? 'Overview'
 
   async function saveCashier(form, cashier) {
-    if (cashier && form.windowId !== cashier.assignedWindow?.id
+    if (cashier && (form.windowId || null) !== (cashier.assignedWindow?.id ?? null)
       && !window.confirm(`Move ${cashier.displayName} to the selected window? Their current session will be revoked.`)) {
       return
     }
@@ -291,7 +323,9 @@ export default function AdminDashboard() {
           displayName: form.displayName,
         }
         if (form.password) body.password = form.password
-        if (form.windowId !== cashier.assignedWindow?.id) body.windowId = form.windowId
+        if (form.windowId !== (cashier.assignedWindow?.id ?? '')) {
+          body.windowId = form.windowId || null
+        }
         await request(`/admin/cashiers/${cashier.id}`, { method: 'PATCH', body })
         setNotice('Cashier account updated.')
       } else {
@@ -301,7 +335,6 @@ export default function AdminDashboard() {
             username: form.username,
             displayName: form.displayName,
             password: form.password,
-            windowId: form.windowId,
           },
         })
         setNotice('Cashier account created.')
@@ -359,6 +392,48 @@ export default function AdminDashboard() {
             : actionError.message,
         )
       }
+    } finally {
+      setBusyWindowId(null)
+    }
+  }
+
+  async function releaseCashier(staffId, windowId) {
+    const cashier = cashiers.find((account) => account.id === staffId)
+    if (!cashier || !window.confirm(
+      `Release ${cashier.displayName} from this window? This is blocked while a ticket is being served.`,
+    )) {
+      return
+    }
+    setBusyWindowId(windowId)
+    setError('')
+    setNotice('')
+    try {
+      await request(`/admin/cashiers/${staffId}`, {
+        method: 'PATCH',
+        body: { windowId: null },
+      })
+      setNotice(`${cashier.displayName} released from the window.`)
+      await refresh()
+    } catch (actionError) {
+      if (actionError.status !== 401) setError(actionError.message)
+    } finally {
+      setBusyWindowId(null)
+    }
+  }
+
+  async function changeWindowAvailability(windowId, availabilityStatus) {
+    setBusyWindowId(windowId)
+    setError('')
+    setNotice('')
+    try {
+      await request(`/admin/windows/${windowId}/status`, {
+        method: 'PATCH',
+        body: { availabilityStatus },
+      })
+      setNotice(`Window marked ${availabilityStatus}.`)
+      await refresh()
+    } catch (actionError) {
+      if (actionError.status !== 401) setError(actionError.message)
     } finally {
       setBusyWindowId(null)
     }
@@ -429,7 +504,11 @@ export default function AdminDashboard() {
                   <p>
                     {view === 'overview'
                       ? 'Live account and window information from the QueueMate backend.'
-                      : 'Manage QueueMate access and counter assignments.'}
+                      : view === 'users'
+                        ? 'View staff roles and account status, and manage cashier accounts.'
+                        : view === 'windows'
+                          ? 'Manage availability and active cashier assignments for Windows 1–4.'
+                          : 'Manage QueueMate access and counter assignments.'}
                   </p>
                 </div>
                 <span className="admin-live-badge"><i /> Backend data</span>
@@ -448,8 +527,8 @@ export default function AdminDashboard() {
                     <>
                       <section className="admin-metrics" aria-label="Account and window overview">
                         <article className="admin-metric-card">
-                          <span>Total cashiers</span><strong>{cashiers.length}</strong>
-                          <small>Accounts returned by the admin API</small>
+                          <span>Total staff accounts</span><strong>{staffAccounts.length}</strong>
+                          <small>Admin and cashier accounts</small>
                         </article>
                         <article className="admin-metric-card">
                           <span>Active cashiers</span><strong>{activeCashiers}</strong>
@@ -489,21 +568,21 @@ export default function AdminDashboard() {
                     </>
                   )}
 
-                  {view === 'cashiers' && (
+                  {view === 'users' && (
                     <section className="admin-panel">
                       <div className="admin-section-heading">
-                        <div><span className="admin-eyebrow">STAFF ACCOUNTS</span><h2>Cashiers</h2></div>
+                        <div><span className="admin-eyebrow">STAFF ACCOUNTS</span><h2>User Management</h2></div>
                         <button
                           className="admin-button admin-button--primary"
                           onClick={() => { setCreating((current) => !current); setEditingId(null) }}
                           type="button"
                         >
-                          {creating ? 'Close form' : 'Create cashier'}
+                          {creating ? 'Close form' : 'Create cashier account'}
                         </button>
                       </div>
                       {creating && (
                         <CashierEditor
-                          cashiers={cashiers}
+                          staffAccounts={staffAccounts}
                           onCancel={() => setCreating(false)}
                           onSave={saveCashier}
                           saving={saving}
@@ -513,51 +592,64 @@ export default function AdminDashboard() {
                       <div className="admin-table-wrap">
                         <table className="admin-table">
                           <thead>
-                            <tr><th>Cashier</th><th>Window</th><th>Status</th><th>Updated</th><th>Actions</th></tr>
+                            <tr>
+                              <th>Username</th>
+                              <th>Display name</th>
+                              <th>Role</th>
+                              <th>Window</th>
+                              <th>Account status</th>
+                              <th>Updated</th>
+                              <th>Actions</th>
+                            </tr>
                           </thead>
                           <tbody>
-                            {cashiers.map((cashier) => (
-                              <Fragment key={cashier.id}>
+                            {staffAccounts.map((account) => (
+                              <Fragment key={account.id}>
                                 <tr>
+                                  <td>@{account.username}</td>
+                                  <td>{account.displayName}</td>
                                   <td>
-                                    <div className="admin-table-person">
-                                      <span className="admin-avatar">{initials(cashier.displayName)}</span>
-                                      <span><strong>{cashier.displayName}</strong><small>@{cashier.username}</small></span>
-                                    </div>
-                                  </td>
-                                  <td>{cashier.assignedWindow?.name ?? 'Not assigned'}</td>
-                                  <td>
-                                    <span className={`admin-pill ${cashier.isActive ? 'admin-pill--active' : 'admin-pill--inactive'}`}>
-                                      {cashier.isActive ? 'Active' : 'Inactive'}
+                                    <span className={`admin-pill ${account.role === 'admin' ? 'admin-pill--admin' : 'admin-pill--cashier'}`}>
+                                      {account.role === 'admin' ? 'Administrator' : 'Cashier'}
                                     </span>
                                   </td>
-                                  <td>{formatUpdated(cashier.updatedAt)}</td>
+                                  <td>{account.role === 'cashier'
+                                    ? account.assignedWindow?.name ?? 'Not assigned'
+                                    : 'Not applicable'}</td>
                                   <td>
-                                    <div className="admin-row-actions">
-                                      <button
-                                        className="admin-text-button"
-                                        onClick={() => { setEditingId(editingId === cashier.id ? null : cashier.id); setCreating(false) }}
-                                        type="button"
-                                      >
-                                        {editingId === cashier.id ? 'Close' : 'Edit'}
-                                      </button>
-                                      <button
-                                        className="admin-text-button"
-                                        disabled={saving}
-                                        onClick={() => toggleCashier(cashier)}
-                                        type="button"
-                                      >
-                                        {cashier.isActive ? 'Deactivate' : 'Activate'}
-                                      </button>
-                                    </div>
+                                    <span className={`admin-pill ${account.isActive ? 'admin-pill--active' : 'admin-pill--inactive'}`}>
+                                      {account.isActive ? 'Active' : 'Inactive'}
+                                    </span>
+                                  </td>
+                                  <td>{formatUpdated(account.updatedAt)}</td>
+                                  <td>
+                                    {account.role === 'cashier' ? (
+                                      <div className="admin-row-actions">
+                                        <button
+                                          className="admin-text-button"
+                                          onClick={() => { setEditingId(editingId === account.id ? null : account.id); setCreating(false) }}
+                                          type="button"
+                                        >
+                                          {editingId === account.id ? 'Close' : 'Edit'}
+                                        </button>
+                                        <button
+                                          className="admin-text-button"
+                                          disabled={saving}
+                                          onClick={() => toggleCashier(account)}
+                                          type="button"
+                                        >
+                                          {account.isActive ? 'Deactivate' : 'Activate'}
+                                        </button>
+                                      </div>
+                                    ) : <span className="admin-muted">Managed separately</span>}
                                   </td>
                                 </tr>
-                                {editingId === cashier.id && (
-                                  <tr key={`${cashier.id}-editor`}>
-                                    <td colSpan="5">
+                                {account.role === 'cashier' && editingId === account.id && (
+                                  <tr key={`${account.id}-editor`}>
+                                    <td colSpan="7">
                                       <CashierEditor
-                                        cashier={cashier}
-                                        cashiers={cashiers}
+                                        cashier={account}
+                                        staffAccounts={staffAccounts}
                                         onCancel={() => setEditingId(null)}
                                         onSave={saveCashier}
                                         saving={saving}
@@ -570,7 +662,7 @@ export default function AdminDashboard() {
                             ))}
                           </tbody>
                         </table>
-                        {cashiers.length === 0 && <p className="admin-empty">No cashier accounts were returned.</p>}
+                        {staffAccounts.length === 0 && <p className="admin-empty">No staff accounts were returned.</p>}
                       </div>
                     </section>
                   )}
@@ -578,10 +670,10 @@ export default function AdminDashboard() {
                   {view === 'windows' && (
                     <section>
                       <div className="admin-section-heading admin-section-heading--standalone">
-                        <div><span className="admin-eyebrow">FOUR COUNTERS</span><h2>Window assignments</h2></div>
+                        <div><span className="admin-eyebrow">FOUR COUNTERS</span><h2>Window Management</h2></div>
                       </div>
                       <p className="admin-data-note">
-                        Window availability is controlled by the signed-in cashier. Reassigning an active cashier revokes that cashier’s current sessions.
+                        Set window availability and manage cashier assignments independently. Reassigning an active cashier revokes that cashier’s current sessions.
                       </p>
                       <div className="admin-window-grid">
                         {windows.map((window) => (
@@ -589,6 +681,8 @@ export default function AdminDashboard() {
                             cashiers={cashiers}
                             key={window.id}
                             onAssign={assignCashier}
+                            onRelease={releaseCashier}
+                            onAvailabilityChange={changeWindowAvailability}
                             saving={busyWindowId === window.id}
                             window={window}
                           />

@@ -51,7 +51,7 @@ export function authenticateUser({ database, sessionSecret }) {
         return
       }
 
-      const validCashier = staff.role === 'cashier' && Boolean(staff.assigned_window_id)
+      const validCashier = staff.role === 'cashier'
       const validAdmin = staff.role === 'admin' && staff.assigned_window_id === null
       if (!validCashier && !validAdmin) {
         next(new HttpError(403, 'Account role or window assignment is invalid'))
