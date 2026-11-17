@@ -6,6 +6,7 @@ export function notFoundHandler(request, response, next) {
 }
 
 export function errorHandler(error, request, response, _next) {
+  void _next
   const parserStatus = [400, 413].includes(error.status) ? error.status : null
   const status = error instanceof HttpError
     ? error.status

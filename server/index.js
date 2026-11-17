@@ -5,6 +5,7 @@ import { ElevenLabsClient } from '@elevenlabs/elevenlabs-js'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync } from 'fs'
+import { getPublicState } from './public-state.js'
 import {
   loadStore, saveStore,
   takeTicket, callNext, recallTicket, skipTicket, completeTicket,
@@ -68,7 +69,7 @@ function isSafeWebhookUrl(url) {
 }
 
 function broadcast() {
-  io.emit('state:sync', getPublicState())
+  io.emit('state:sync', getPublicSnapshot())
   // Persist every mutation (saveStore is throttled internally to 2s max)
   saveStore(state)
 }
@@ -77,21 +78,8 @@ function isLicensed() {
   return validateLicenseKey(state.license)
 }
 
-function getPublicState() {
-  return {
-    licensed: isLicensed(),
-    counters: state.counters,
-    categories: state.categories,
-    tickets: state.tickets,
-    nextTicketNumber: state.nextTicketNumber,
-    announcements: state.announcements,
-    settings: state.settings,
-    branches: state.branches,
-    activeBranch: state.activeBranch,
-    auditLog: state.auditLog.slice(0, 100),
-    shifts: state.shifts.slice(-50),
-    roles: { hasAdmin: !!state.roles.adminPassword, hasOperator: !!state.roles.operatorPassword },
-  }
+function getPublicSnapshot() {
+  return getPublicState(state, isLicensed())
 }
 
 // Webhook helper
@@ -150,16 +138,13 @@ app.get('/api/audit', (_, res) => {
   res.json(state.auditLog.slice(0, 200))
 })
 
-// Global ElevenLabs key — used as fallback if no per-instance key is set
-const GLOBAL_ELEVENLABS_KEY = 'sk_edd298b7eed05da619d536b6ea4d36e5157019b7dcc6cb72'
-
 // ElevenLabs TTS — server-side using the SDK
 app.post('/api/tts', async (req, res) => {
   try {
     const { text } = req.body
     if (!text) return res.status(400).json({ error: 'text required' })
 
-    const apiKey = state.settings.elevenLabsApiKey || GLOBAL_ELEVENLABS_KEY
+    const apiKey = state.settings.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY
     const voiceId = state.settings.elevenLabsVoiceId || 'A9ATTqUUQ6GHu0coCz8t'
     const modelId = state.settings.elevenLabsModel || 'eleven_multilingual_v2'
 
@@ -190,7 +175,7 @@ app.post('/api/tts', async (req, res) => {
 // Fetch ElevenLabs voices via server (keeps API key off the client)
 app.get('/api/tts/voices', async (_, res) => {
   try {
-    const apiKey = state.settings.elevenLabsApiKey || GLOBAL_ELEVENLABS_KEY
+    const apiKey = state.settings.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY
     if (!apiKey) return res.json({ voices: [] })
     const client = new ElevenLabsClient({ apiKey })
     const result = await client.voices.getAll()
@@ -206,7 +191,7 @@ io.on('connection', (socket) => {
   // though admin auth is now client-side, since this protects the public
   // kiosk endpoint from spam.
   socket.data.ticketTakes = []
-  socket.emit('state:sync', getPublicState())
+  socket.emit('state:sync', getPublicSnapshot())
 
   // ---- License ----
   socket.on('license:activate', ({ key }, cb) => {

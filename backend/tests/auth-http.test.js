@@ -403,7 +403,7 @@ test('HTTP authentication rejects an expired database session', async (t) => {
   assert.equal(response.status, 401)
 })
 
-test('isolated HTTP login limiter allows ten requests and rejects the eleventh', async (t) => {
+test('isolated HTTP login limiter allows ten requests and rejects the eleventh', async () => {
   const appUrl = new URL('../src/app.js', import.meta.url).href
   const script = `
     import { createServer } from 'node:http';
