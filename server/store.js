@@ -100,7 +100,6 @@ function makeDefault() {
       smartRouting: false,
       floorMapEnabled: false,
       ttsProvider: 'elevenlabs',
-      elevenLabsApiKey: 'sk_edd298b7eed05da619d536b6ea4d36e5157019b7dcc6cb72',
       elevenLabsVoiceId: 'A9ATTqUUQ6GHu0coCz8t',
       elevenLabsModel: 'eleven_multilingual_v2',
       backgroundTheme: 'none',
