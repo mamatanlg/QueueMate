@@ -29,7 +29,36 @@ Mobile app (Expo) ─────┘
 | `database/` | PostgreSQL schema and migrations | Persistent shared queue and application data |
 | `docs/` | Project documentation | Architecture and implementation notes |
 
-The repository also retains a root-level Vite/React and Express application (`src/`, `server/`, and root package files). Its existing `/cashier` portal is the PC login surface for the current cashier/admin integration; `/admin` is the protected administrator workspace. The separate `cashier-web/`, `public-display/`, and `mobile-app/` projects remain distinct from that root application.
+The current authenticated cashier/admin frontend and public display are routes in the root Vite/React application (`src/`). The authenticated API is the separate Express/PostgreSQL backend in `backend/`. The `cashier-web/` and `public-display/` directories are placeholders, not separate deployable frontends. The root `server/` directory is a legacy application and is not the authenticated API.
+
+## Current local development
+
+Run the backend and Vite frontend in separate terminals. Do not use the legacy root server for authenticated `/api/v1` requests.
+
+**Terminal 1 — backend**, from the repository root:
+
+```powershell
+Set-Location backend
+npm run dev
+```
+
+The backend listens on port `4000` by default. It requires `DATABASE_URL` and `SESSION_SECRET`; `CLIENT_ORIGINS` should allow the frontend origin. `NODE_ENV` selects the environment, and `PORT` can override the default. For the first administrator provisioning command only, `ADMIN_PROVISION_TARGET` is also required.
+
+**Terminal 2 — frontend**, from the repository root:
+
+```powershell
+npm run dev
+```
+
+This starts Vite only. Vite normally reports `Local: http://localhost:5173/`; open the exact `Local` URL it prints if the port is busy and Vite selects another one. The cashier, admin, display, and student web routes are under this frontend. In development, `vite.config.js` proxies `/api/v1` and `/socket.io` to `http://localhost:4000`. Backend development CORS already allows the default localhost Vite origin.
+
+For a separately hosted production frontend, set the build-time variable `VITE_API_BASE_URL` to the backend API base URL ending in `/api/v1`. Set `CLIENT_ORIGINS` on the backend to the frontend's exact browser origin.
+
+## Backend deployment configuration
+
+`render.yaml` configures the authenticated backend from the `backend/` directory. Render requires `DATABASE_URL`, `SESSION_SECRET`, and `CLIENT_ORIGINS`; `NODE_ENV` is set to production and Render supplies `PORT`. The health check uses the existing `/api/v1/health/database` route, which returns success only when the database connection check succeeds.
+
+This Render service deploys the backend only; it does not deploy the Vite frontend. Host the frontend separately and configure its `VITE_API_BASE_URL` as described above. Set environment variable values in the hosting provider's environment settings; do not put secrets in this README or commit them.
 
 ### Queue rules the backend must enforce
 
@@ -177,44 +206,9 @@ The following sections describe the pre-existing Vite/React queue application re
 
 ---
 
-## Quick Start
+## Legacy application setup and deployment
 
-```bash
-# Clone
-git clone https://github.com/krispx2811/Queue-System.git
-cd Queue-System
-
-# Install
-npm install
-
-# Configure Supabase
-cp .env.example .env
-# Edit .env with your Supabase credentials
-
-# Run schema once in Supabase SQL Editor (server/schema.sql)
-
-# Run (starts both server + frontend)
-npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173)
-
----
-
-## Deploy to Render (Free)
-
-One-click deploy from GitHub:
-
-1. Sign up at [render.com](https://render.com)
-2. **New** → **Web Service** → connect your GitHub repo
-3. Render auto-detects `render.yaml`
-4. Add environment variables under "Environment":
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_KEY`
-   - `SUPABASE_ANON_KEY`
-5. Click **Create Web Service** — done in ~3 minutes
-
-**Prevent spin-down:** Render free tier sleeps after 15 min idle. Set up a free monitor at [uptimerobot.com](https://uptimerobot.com) to ping `https://your-app.onrender.com/api/status` every 5 minutes.
+The following legacy architecture and endpoint descriptions are historical reference only. Its root `server/index.js` process is not the authenticated `/api/v1` backend and must not be used as the production API for the current frontend. Use the current local development and backend deployment instructions above.
 
 ---
 

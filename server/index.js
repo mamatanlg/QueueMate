@@ -13,7 +13,7 @@ import {
   resetQueue, getAnalytics, getAdvancedAnalytics, getMonthlyAnalytics, getTicketPosition,
   findBestCounter, checkIdleCounters, getCategoryWaitTimes,
   addAudit, clockIn, clockOut,
-  validateLicenseKey, generateLicenseKey,
+  validateLicenseKey,
 } from './store.js'
 
 const app = express()
@@ -86,13 +86,13 @@ function getPublicSnapshot() {
 async function fireWebhooks(event, data) {
   for (const wh of state.webhooks || []) {
     if (wh.events.includes(event) || wh.events.includes('*')) {
-      try {
-        fetch(wh.url, {
+      void Promise.resolve()
+        .then(() => fetch(wh.url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ event, data, timestamp: Date.now(), branch: state.activeBranch }),
-        }).catch(() => {})
-      } catch {}
+        }))
+        .catch(() => console.warn('Webhook delivery failed'))
     }
   }
 }
@@ -338,7 +338,7 @@ io.on('connection', (socket) => {
   })
 
   socket.on('ticket:transferToRoom', ({ ticketNumber, toCounterId, fromCounterId }, cb) => {
-    const ticket = transferToRoom(state, ticketNumber, toCounterId, fromCounterId)
+    const ticket = transferToRoom(state, ticketNumber, toCounterId)
     if (ticket) {
       const fromName = state.counters.find(c => c.id === fromCounterId)?.name || ''
       const toName = state.counters.find(c => c.id === toCounterId)?.name || ''
@@ -576,7 +576,7 @@ process.on('SIGINT', () => shutdown('SIGINT'))
 const APP_URL = process.env.RENDER_EXTERNAL_URL
 if (APP_URL) {
   setInterval(() => {
-    fetch(`${APP_URL}/api/status`).catch(() => {})
+    fetch(`${APP_URL}/api/status`).catch(() => console.warn('Health check request failed'))
   }, 14 * 60 * 1000)
   console.log(`✓ Self-ping enabled: ${APP_URL}`)
 }

@@ -76,21 +76,27 @@ FROM public.staff
 WHERE role = 'admin';
 ```
 
-To test authentication, start the backend and web app, open `http://localhost:3000/cashier`, and use the existing login screen with the new username and password. Confirm the session opens the admin dashboard. Enter the password only in the password field; do not put it in a shell command, URL, environment variable, or log. The equivalent API is `POST /api/v1/auth/login`; use a private API client with a secure input if testing the endpoint directly.
+To test authentication, start the backend and web app, open the Vite `Local` URL (normally `http://localhost:5173/`) and navigate to `/cashier`. Use the existing login screen with the new username and password. Confirm the session opens the admin dashboard. Enter the password only in the password field; do not put it in a shell command, URL, environment variable, or log. The equivalent API is `POST /api/v1/auth/login`; use a private API client with a secure input if testing the endpoint directly.
 
-## Run
+## Run locally
+
+Start the backend in Terminal 1 from this directory:
 
 ```powershell
 npm run dev
 ```
 
-Or run without file watching:
+It listens on port `4000` by default. In Terminal 2, from the repository root, start the frontend:
 
 ```powershell
-npm start
+npm run dev
 ```
 
-The server listens on port 4000 by default and binds to network interfaces so LAN devices can connect. Set `PORT` to change it. Health endpoints:
+The root `npm run dev` command starts Vite only. Vite normally reports `Local: http://localhost:5173/`; use the exact `Local` URL it prints if it selects another port. The Vite proxy sends `/api/v1` and `/socket.io` to the backend on port `4000`.
+
+The backend binds to network interfaces so LAN devices can connect. Set `PORT` to change the backend port; if changed, update the Vite proxy target too. Required backend variable names are `DATABASE_URL` and `SESSION_SECRET`; set `CLIENT_ORIGINS` to the exact frontend origin outside development. `NODE_ENV` selects the environment. Render supplies `PORT`. Set `VITE_API_BASE_URL` at frontend build time when the frontend is hosted separately, and set it to the backend API base URL ending in `/api/v1`.
+
+Health endpoints:
 
 - `GET /api/v1/health` — backend process health.
 - `GET /api/v1/health/database` — executes `SELECT 1`; returns `503` if the database is unconfigured or unavailable.

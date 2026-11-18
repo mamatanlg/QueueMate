@@ -82,11 +82,12 @@ test('cashier login verifies a bcrypt hash and creates a revocable JWT session',
 
   const result = await login({
     database,
-    username: 'cashier1',
+    username: 'Cashier1',
     password: 'test-password-12',
     sessionSecret,
   })
 
+  assert.equal(calls[0].values[0], 'cashier1')
   const claims = jwt.verify(result.accessToken, sessionSecret, {
     algorithms: ['HS256'],
     audience: 'queuemate-cashier',

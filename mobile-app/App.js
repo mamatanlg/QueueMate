@@ -47,7 +47,6 @@ export default function App() {
   const [monitoringScreen, setMonitoringScreen] = useState(false)
   const [demoWindows, setDemoWindows] = useState(DEMO_WINDOWS)
   const [queueRefreshed, setQueueRefreshed] = useState(false)
-  const [nearTurnAlertEvent, setNearTurnAlertEvent] = useState(null)
   const scanHandled = useRef(false)
   const ticketCreated = useRef(false)
   const alertedNearTurnEvent = useRef(null)
@@ -67,24 +66,21 @@ export default function App() {
     Number.isFinite(ticketNumber) &&
     Number.isFinite(servingNumber) &&
     ticketNumber - servingNumber === 5
+  const alertTicketNumber = isExactlyFiveAhead ? demoTicket.number : null
+  const alertWindowId = isExactlyFiveAhead ? assignedWindow.id : null
+  const nearTurnAlertEvent =
+    alertTicketNumber !== null && alertWindowId !== null
+      ? { ticketNumber: alertTicketNumber, windowId: alertWindowId }
+      : null
 
   useEffect(() => {
-    if (!isExactlyFiveAhead || !assignedWindow) {
-      setNearTurnAlertEvent(null)
-      return
-    }
-
-    const eventKey = `${demoTicket.number}:${assignedWindow.id}`
-    setNearTurnAlertEvent({
-      ticketNumber: demoTicket.number,
-      windowId: assignedWindow.id,
-    })
-
+    if (alertTicketNumber === null || alertWindowId === null) return
+    const eventKey = `${alertTicketNumber}:${alertWindowId}`
     if (alertedNearTurnEvent.current !== eventKey) {
       alertedNearTurnEvent.current = eventKey
       Vibration.vibrate([0, 400, 200, 400])
     }
-  }, [assignedWindow, demoTicket, isExactlyFiveAhead])
+  }, [alertTicketNumber, alertWindowId])
 
   function acceptQueueEntryQr(value) {
     if (!parseQueueEntryQr(value)) return false

@@ -11,13 +11,14 @@ export async function login({ database, username, password, sessionSecret }) {
     throw new HttpError(503, 'Authentication is not configured')
   }
 
+  const normalizedUsername = username.trim().toLowerCase()
   const result = await database.query(
     `SELECT s.id, s.username, s.password_hash, s.display_name,
             s.role, s.assigned_window_id, w.window_number, w.window_name
      FROM staff s
      LEFT JOIN cashier_windows w ON w.id = s.assigned_window_id
      WHERE s.username = $1 AND s.is_active = true`,
-    [username],
+    [normalizedUsername],
   )
   const staff = result.rows[0]
   const passwordHash = staff?.password_hash ?? await dummyPasswordHash

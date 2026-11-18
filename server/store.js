@@ -243,14 +243,15 @@ export async function loadStore() {
       const raw = readFileSync(DATA_FILE, 'utf-8')
       return { ...makeDefault(), ...JSON.parse(raw) }
     }
-  } catch {}
+  } catch {
+    console.warn('Local store file could not be loaded; using defaults')
+  }
   return makeDefault()
 }
 
 let lastSave = 0
 let savePending = false
 let lastAuditCount = 0
-let lastShiftCount = 0
 
 export async function saveStore(state, { force = false } = {}) {
   const now = Date.now()
@@ -309,7 +310,8 @@ export async function saveStore(state, { force = false } = {}) {
 
       // 6. Shifts — sync recent ones
       const shiftsPromise = state.shifts.length
-        ? supabase.from('shifts').upsert(state.shifts.map(dbShift), { onConflict: 'operator_name,clock_in', ignoreDuplicates: false }).catch(() => {})
+        ? supabase.from('shifts').upsert(state.shifts.map(dbShift), { onConflict: 'operator_name,clock_in', ignoreDuplicates: false })
+            .catch(() => console.warn('Shift sync failed'))
         : Promise.resolve()
 
       // 7. Announcements — replace all (small list)
@@ -343,7 +345,11 @@ export async function saveStore(state, { force = false } = {}) {
   }
 
   // Backup to JSON file
-  try { writeFileSync(DATA_FILE, JSON.stringify(state, null, 2)) } catch {}
+  try {
+    writeFileSync(DATA_FILE, JSON.stringify(state, null, 2))
+  } catch {
+    console.warn('Local store backup could not be written')
+  }
 }
 
 // ---- Ticket operations ----
@@ -547,7 +553,7 @@ export function transferTicket(state, ticketNumber, toCategoryId, toCounterId = 
 
 // Transfer a patient to a specific room/counter (same stage, different counter)
 // Sets forcedCounterId so only that counter can pick them up.
-export function transferToRoom(state, ticketNumber, toCounterId, fromCounterId) {
+export function transferToRoom(state, ticketNumber, toCounterId) {
   const ticket = state.tickets.find(t => t.number === ticketNumber)
   if (!ticket) return null
 

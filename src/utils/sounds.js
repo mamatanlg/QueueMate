@@ -25,15 +25,21 @@ export function primeAudio() {
     primed = true
     try {
       const c = ctx()
-      if (c.state === 'suspended') c.resume().catch(() => {})
-    } catch {}
+      if (c.state === 'suspended') {
+        c.resume().catch(() => console.warn('Unable to resume audio context'))
+      }
+    } catch {
+      console.warn('Unable to initialize audio context')
+    }
     // Also force an HTMLAudioElement to play a silent buffer so subsequent
     // <Audio> playback (used by the ElevenLabs/Google paths) doesn't get
     // blocked by the same autoplay policy.
     try {
       const a = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA')
-      a.play().catch(() => {})
-    } catch {}
+      a.play().catch(() => console.warn('Unable to prime audio playback'))
+    } catch {
+      console.warn('Unable to prime audio playback')
+    }
     window.removeEventListener('click', onGesture, true)
     window.removeEventListener('keydown', onGesture, true)
     window.removeEventListener('touchstart', onGesture, true)
@@ -118,7 +124,6 @@ const themes = {
 
   // Airport PA — the classic two-tone before announcements
   airport: (c) => {
-    const rev = createReverb(c, 1)
     tone(c, 932, c.currentTime, 0.35, 'sine', 0.2)
     tone(c, 932, c.currentTime, 0.35, 'triangle', 0.06)
     tone(c, 698, c.currentTime + 0.35, 0.5, 'sine', 0.22)
@@ -244,7 +249,11 @@ export async function playChime(theme = 'doorbell', volume = 0.8) {
     // Browsers suspend AudioContext after the tab is backgrounded; await so
     // oscillators don't schedule against a stalled clock and play silently.
     if (c.state === 'suspended') {
-      try { await c.resume() } catch {}
+      try {
+        await c.resume()
+      } catch {
+        console.warn('Unable to resume audio context')
+      }
     }
     // Apply volume via master gain. Guard against undefined / NaN — those
     // would silence everything by writing NaN to the gain param.
@@ -259,6 +268,6 @@ export async function playChime(theme = 'doorbell', volume = 0.8) {
       else setTimeout(resolve, 2000)
     })
   } catch {
-    // swallow — never let an audio failure break the announcement queue
+    console.warn('Unable to play announcement chime')
   }
 }
