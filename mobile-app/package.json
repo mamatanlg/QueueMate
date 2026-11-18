@@ -10,6 +10,7 @@
     "react-native": "0.88.1"
   },
   "scripts": {
+    "test": "node --test",
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",

@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import QrScanner from 'qr-scanner'
 import {
+  QUEUE_ENTRY_QR_PAYLOAD,
+  parseQueueEntryQr,
+} from '../../../mobile-app/queue-entry-qr.mjs'
+import {
   displayWindows,
   latestQueueNumber,
   mobileTransactionTypes,
-  queueEntryAccessCode,
 } from './mobileMockData'
 import './StudentMobile.css'
 
@@ -88,7 +91,7 @@ function Scanner({ error, onCode, onCancel }) {
         </p>
       )}
       <button className="student-mobile__text-button" type="button" onClick={onCancel}>
-        Enter access code manually
+        Enter flow identifier manually
       </button>
     </section>
   )
@@ -124,14 +127,8 @@ function StudentMobile() {
   const [alertFeedback, setAlertFeedback] = useState('')
 
   const validateAccessCode = useCallback((value) => {
-    let code = value
-    try {
-      code = new URL(value).searchParams.get('code') || value
-    } catch {
-      // Manual entry is a plain access code, not a URL.
-    }
-    if (code.trim().toUpperCase() !== queueEntryAccessCode) {
-      setAccessError('That access code is not valid. Check the code on the TV and try again.')
+    if (!parseQueueEntryQr(value)) {
+      setAccessError('That QR code is not the official QueueMate queue-entry code.')
       return
     }
     setAccessError('')
@@ -227,7 +224,7 @@ function StudentMobile() {
               </button>
               <div className="student-mobile__divider"><span>OR</span></div>
               <button className="student-mobile__button student-mobile__button--secondary" type="button" onClick={() => { setAccessError(''); setScreen('manual') }}>
-                Enter access code manually
+                Enter flow identifier manually
               </button>
               <p className="student-mobile__privacy">Camera access is requested only when you choose to scan.</p>
             </section>
@@ -239,18 +236,18 @@ function StudentMobile() {
             <button className="student-mobile__back" type="button" onClick={() => { setAccessError(''); setScreen('scanner') }}>← Back to scanner</button>
             <div className="student-mobile__intro">
               <span className="student-mobile__eyebrow">ALTERNATIVE ACCESS</span>
-              <h1>Enter Access Code Manually</h1>
-              <p>Find the short code beside the QR code on the TV display.</p>
+              <h1>Enter QueueMate Flow Identifier</h1>
+              <p>Enter the official flow identifier shown beside the TV QR code.</p>
             </div>
             <form className="student-mobile__form" onSubmit={continueWithCode}>
-              <label htmlFor="mobile-access-code">TV access code</label>
+              <label htmlFor="mobile-access-code">Queue-entry flow identifier</label>
               <input
-                autoCapitalize="characters"
+                autoCapitalize="none"
                 autoComplete="off"
                 id="mobile-access-code"
-                maxLength={12}
+                maxLength={QUEUE_ENTRY_QR_PAYLOAD.length}
                 onChange={(event) => { setAccessCode(event.target.value); setAccessError('') }}
-                placeholder="e.g. QM-47K2"
+                placeholder={QUEUE_ENTRY_QR_PAYLOAD}
                 value={accessCode}
               />
               {accessError && <p className="student-mobile__message student-mobile__message--error" role="alert">{accessError}</p>}

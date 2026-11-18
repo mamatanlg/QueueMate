@@ -23,7 +23,7 @@ Copy-Item .env.example .env
 
 Set `DATABASE_URL` to the Supabase PostgreSQL connection string before checking database connectivity. Never commit `.env` or expose its contents. Supabase connections use TLS with certificate verification; local loopback database connections do not use TLS.
 
-`CLIENT_ORIGINS` is a comma-separated allowlist of browser origins; configured values are trimmed and matched exactly. In development, its values are added to the defaults for `localhost` and `127.0.0.1` on ports 3000, 3002, 5173, and 5174. Add the exact LAN origins used by local web clients when testing on other devices. Outside development, only configured origins are allowed. Requests without an Origin header, such as native mobile requests, are allowed by CORS; CORS is not authentication.
+`CLIENT_ORIGINS` is a comma-separated allowlist of browser origins; configured values are trimmed and matched exactly. In development, its values are added to the defaults for `localhost` and `127.0.0.1` on ports 3000, 3002, 5173, 5174, and 5176. Add the exact LAN origins used by local web clients when testing on other devices. Outside development, only configured origins are allowed. Requests without an Origin header, such as native mobile requests, are allowed by CORS; CORS is not authentication.
 
 ### Database setup
 
@@ -95,7 +95,7 @@ The server listens on port 4000 by default and binds to network interfaces so LA
 - `GET /api/v1/health` — backend process health.
 - `GET /api/v1/health/database` — executes `SELECT 1`; returns `503` if the database is unconfigured or unavailable.
 
-The root Vite PC application proxies `/api/v1` to `http://localhost:4000` in development. Start this backend separately with `npm run dev` from `backend/`. For a deployed frontend, set `VITE_API_BASE_URL` to the backend's public API base URL, ending in `/api/v1`, and allow the frontend origin in the backend's `CLIENT_ORIGINS`.
+The root Vite PC application proxies `/api/v1` and `/socket.io` to `http://localhost:4000` in development. Start this backend separately with `npm run dev` from `backend/`. For a deployed frontend, set `VITE_API_BASE_URL` to the backend's public API base URL, ending in `/api/v1`, and allow the frontend origin in the backend's `CLIENT_ORIGINS`.
 
 ## API
 
