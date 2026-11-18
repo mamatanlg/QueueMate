@@ -161,7 +161,7 @@
 .tv-qr-card__copy { display: grid; gap: 5px; }
 .tv-qr-card__copy > span { color: #242075; font-size: 9px; font-weight: 800; letter-spacing: .55px; }
 .tv-qr-card__copy p { color: #4f5061; font-size: 9px; line-height: 1.4; }
-.tv-qr-card__manual-code { width: fit-content; padding: 3px 7px; border-radius: 3px; background: #e7e5f5; color: #17164d; font-family: 'DM Sans', sans-serif; font-size: 15px; letter-spacing: 1.4px; }
+.tv-qr-card__manual-code { width: fit-content; max-width: 100%; padding: 3px 7px; border-radius: 3px; background: #e7e5f5; color: #17164d; font-family: 'DM Sans', sans-serif; font-size: 10px; letter-spacing: 0; overflow-wrap: anywhere; }
 
 .tv-advertisement__pagination { position: absolute; bottom: 30px; left: clamp(26px, 5vw, 78px); z-index: 1; display: flex; gap: 6px; }
 .tv-advertisement__pagination span { width: 16px; height: 4px; border-radius: 99px; background: #ffffff83; }
@@ -304,3 +304,58 @@
 .tv-queue-column__footer { color: #52628D; }
 
 .tv-display-restriction { background: #fff; color: #173CCB; }
+
+.tv-queue-column__live.is-connected i { background: #159447; }
+.tv-queue-column__live.is-disconnected i { background: #d18a00; }
+
+.tv-display__connection-message {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid #f0c36d;
+  border-radius: 5px;
+  background: #fff7e6;
+  color: #704b00;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.tv-display__connection-message button {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: 1px solid #704b00;
+  border-radius: 4px;
+  background: #fff7e6;
+  color: #704b00;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.tv-display__queue-state {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #52628D;
+  font-size: 13px;
+  text-align: center;
+}
+
+.tv-display__queue-state strong { color: #173CCB; }
+.tv-display__queue-state button {
+  padding: 8px 12px;
+  border: 1px solid #173CCB;
+  border-radius: 5px;
+  background: #fff;
+  color: #173CCB;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}

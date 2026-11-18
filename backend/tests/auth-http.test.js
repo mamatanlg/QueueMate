@@ -209,6 +209,44 @@ test('HTTP login returns cashier identity, window, and a bearer session', async 
   })
 })
 
+test('login CORS preflight and authorized response accept the Vite 5176 origin', async (t) => {
+  const database = new AuthHttpDatabase()
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+  const origin = 'http://localhost:5176'
+
+  const preflight = await fetch(new URL('/api/v1/auth/login', server.origin), {
+    method: 'OPTIONS',
+    headers: {
+      origin,
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type',
+    },
+  })
+
+  assert.equal(preflight.status, 204)
+  assert.equal(preflight.headers.get('access-control-allow-origin'), origin)
+  assert.equal(preflight.headers.get('access-control-allow-credentials'), null)
+
+  const response = await fetch(new URL('/api/v1/auth/login', server.origin), {
+    method: 'POST',
+    headers: {
+      origin,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ username: 'cashier2', password: testPassword }),
+  })
+  const body = await response.json()
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('access-control-allow-origin'), origin)
+  assert.equal(response.headers.get('access-control-allow-credentials'), null)
+  assert.equal(body.role, 'cashier')
+  assert.equal(body.cashier.username, 'cashier2')
+  assert.equal(typeof body.accessToken, 'string')
+  assert.equal(database.sessions.size, 1)
+})
+
 test('HTTP login rejects invalid credentials and malformed input', async (t) => {
   const database = new AuthHttpDatabase()
   const server = await startTestServer(database)
@@ -462,6 +500,8 @@ test('login CORS preflight accepts the supported Vite origins and rejects unrela
     'http://127.0.0.1:5173',
     'http://localhost:5174',
     'http://127.0.0.1:5174',
+    'http://localhost:5176',
+    'http://127.0.0.1:5176',
   ]
 
   for (const origin of viteOrigins) {

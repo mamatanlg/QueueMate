@@ -11,8 +11,11 @@ import {
   View,
 } from 'react-native'
 import { CameraView, useCameraPermissions } from 'expo-camera'
+import {
+  QUEUE_ENTRY_QR_PAYLOAD,
+  parseQueueEntryQr,
+} from './queue-entry-qr.mjs'
 
-const VALID_ACCESS_CODE = 'QM-47K2'
 const DEMO_WINDOWS = [
   { id: 1, servingNumber: '252', status: 'SERVING' },
   { id: 2, servingNumber: '248', status: 'SERVING' },
@@ -83,31 +86,10 @@ export default function App() {
     }
   }, [assignedWindow, demoTicket, isExactlyFiveAhead])
 
-  function normalizeAccessCode(value) {
-    const trimmedValue = typeof value === 'string' ? value.trim() : ''
-    if (!trimmedValue) return ''
+  function acceptQueueEntryQr(value) {
+    if (!parseQueueEntryQr(value)) return false
 
-    if (/^QM-[A-Z0-9]{4}$/i.test(trimmedValue)) {
-      return trimmedValue.toUpperCase()
-    }
-
-    try {
-      const url = new URL(trimmedValue)
-      const urlContent = decodeURIComponent(`${url.pathname}${url.search}${url.hash}`)
-      const match = urlContent.match(
-        /(?:^|[^A-Z0-9])(QM-[A-Z0-9]{4})(?=$|[^A-Z0-9])/i,
-      )
-      return match ? match[1].toUpperCase() : trimmedValue.toUpperCase()
-    } catch {
-      return trimmedValue.toUpperCase()
-    }
-  }
-
-  function acceptAccessCode(value) {
-    const normalizedCode = normalizeAccessCode(value)
-    if (normalizedCode !== VALID_ACCESS_CODE) return false
-
-    setConfirmedCode(VALID_ACCESS_CODE)
+    setConfirmedCode('Verified')
     setAccessGranted(true)
     setManualEntry(false)
     setScanning(false)
@@ -136,7 +118,7 @@ export default function App() {
         )
       }
     } catch {
-      setMessage('Camera access is unavailable right now. Please enter the access code manually.')
+      setMessage('Camera access is unavailable right now. Please enter the flow identifier manually.')
     }
   }
 
@@ -144,20 +126,20 @@ export default function App() {
     if (scanHandled.current) return
     scanHandled.current = true
 
-    if (!acceptAccessCode(data)) {
+    if (!acceptQueueEntryQr(data)) {
       setScanning(false)
-      setMessage('Invalid QR code. Scan the QueueMate code shown on the Public TV Display.')
+      setMessage('Invalid QR code. Scan the official QueueMate queue-entry code shown on the Public TV Display.')
     }
   }
 
   function submitManualCode() {
     if (!manualCode.trim()) {
-      setMessage('Enter the access code shown beside the QR code on the display.')
+      setMessage('Enter the official flow identifier shown beside the TV QR code.')
       return
     }
 
-    if (!acceptAccessCode(manualCode)) {
-      setMessage('Invalid access code. Check the code on the Public TV Display and try again.')
+    if (!acceptQueueEntryQr(manualCode)) {
+      setMessage('Invalid flow identifier. Check the official code shown on the Public TV Display.')
     }
   }
 
@@ -361,7 +343,7 @@ export default function App() {
               <Text style={styles.backButtonText}>‹  Back</Text>
             </TouchableOpacity>
             <View style={styles.intro}>
-              <Text style={styles.eyebrow}>ACCESS CODE: {confirmedCode}</Text>
+              <Text style={styles.eyebrow}>QUEUE ENTRY VERIFIED</Text>
               <Text style={styles.title}>Select Your Transaction</Text>
               <Text style={styles.description}>
                 Choose the service you need today.
@@ -433,11 +415,11 @@ export default function App() {
               <Text style={styles.eyebrow}>ACCESS CONFIRMED</Text>
               <Text style={styles.title}>You're connected</Text>
               <Text style={styles.description}>
-                The QueueMate access code was verified successfully.
+                The QueueMate queue-entry QR was verified successfully.
               </Text>
             </View>
             <View style={styles.confirmedCodeCard}>
-              <Text style={styles.confirmedCodeLabel}>ACCESS CODE</Text>
+              <Text style={styles.confirmedCodeLabel}>QUEUE ENTRY</Text>
               <Text style={styles.confirmedCode}>{confirmedCode}</Text>
             </View>
             <Text style={styles.successNote}>
@@ -496,7 +478,7 @@ export default function App() {
               }}
               style={styles.manualLink}
             >
-              <Text style={styles.manualLinkText}>Enter access code manually</Text>
+              <Text style={styles.manualLinkText}>Enter flow identifier manually</Text>
             </TouchableOpacity>
           </View>
         ) : manualEntry ? (
@@ -513,21 +495,22 @@ export default function App() {
             </TouchableOpacity>
             <View style={styles.intro}>
               <Text style={styles.eyebrow}>ALTERNATIVE ACCESS</Text>
-              <Text style={styles.title}>Enter access code</Text>
+              <Text style={styles.title}>Enter QueueMate flow identifier</Text>
               <Text style={styles.description}>
-                Find the short code beside the QR code on the Public TV Display.
+                Enter the official flow identifier shown beside the Public TV QR code.
               </Text>
             </View>
             <TextInput
-              accessibilityLabel="Access code"
-              autoCapitalize="characters"
+              accessibilityLabel="Queue-entry flow identifier"
+              autoCapitalize="none"
               autoCorrect={false}
               onChangeText={(value) => {
                 setManualCode(value)
                 setMessage('')
               }}
               onSubmitEditing={submitManualCode}
-              placeholder="Enter access code"
+              maxLength={QUEUE_ENTRY_QR_PAYLOAD.length}
+              placeholder={QUEUE_ENTRY_QR_PAYLOAD}
               placeholderTextColor="#8290B5"
               returnKeyType="done"
               style={styles.input}
@@ -551,7 +534,7 @@ export default function App() {
               <Text style={styles.eyebrow}>STUDENT &amp; PARENT APP</Text>
               <Text style={styles.title}>Welcome to QueueMate</Text>
               <Text style={styles.description}>
-                Scan the QR code displayed on the Public TV Display to get a queue number.
+                Scan the official QR code displayed on the Public TV Display to begin queue entry.
               </Text>
             </View>
 
@@ -578,7 +561,7 @@ export default function App() {
               }}
               style={[styles.button, styles.secondaryButton]}
             >
-              <Text style={styles.secondaryButtonText}>Manual Access Code</Text>
+              <Text style={styles.secondaryButtonText}>Enter Flow Identifier</Text>
             </TouchableOpacity>
 
             {message ? <Text style={styles.message}>{message}</Text> : null}
