@@ -9,7 +9,6 @@ import { withTransaction } from '../src/db/transaction.js'
 import { createCashierSchema } from '../src/validation/schemas.js'
 import { readHidden } from './seed-cashiers.js'
 
-const adminProvisionLock = 'queuemate:first-admin-provision:v1'
 const adminInputSchema = createCashierSchema.shape.body.pick({
   username: true,
   displayName: true,
@@ -91,23 +90,36 @@ function validateCredentials(credentials) {
   throw new ProvisioningError('Display name must be 1-150 characters.')
 }
 
-export async function provisionFirstAdmin({
-  database = pool,
-  databaseUrl = config.databaseUrl,
-  expectedTarget = process.env.ADMIN_PROVISION_TARGET,
-  confirmTarget = async (target) => promptText(`Type "${target}" to confirm the database: `),
-  prompt = promptText,
-  passwordReader = readHidden,
-  hashPassword = bcrypt.hash,
-} = {}) {
+export async function provisionFirstAdmin(options = {}) {
+  const {
+    database = pool,
+    databaseUrl = config.databaseUrl,
+    confirmTarget = async (target) => promptText(`Type "${target}" to confirm the database: `),
+    prompt = promptText,
+    passwordReader = readHidden,
+    hashPassword = bcrypt.hash,
+  } = options
+  const role = options.role ?? 'admin'
+  if (!['admin', 'system_admin'].includes(role)) {
+    throw new ProvisioningError('Only admin and system_admin roles can be provisioned.')
+  }
+  const targetSetting = role === 'system_admin'
+    ? 'SYSTEM_ADMIN_PROVISION_TARGET'
+    : 'ADMIN_PROVISION_TARGET'
+  const expectedTarget = options.expectedTarget ?? process.env[targetSetting]
+  const roleLabel = role === 'system_admin' ? 'System admin' : 'Admin'
+  const existingRoleMessage = role === 'system_admin'
+    ? 'A system admin account already exists; no account was changed.'
+    : 'An admin account already exists; no account was changed.'
+
   if (!databaseUrl) throw new ProvisioningError('DATABASE_URL is not configured.')
   if (!expectedTarget?.trim()) {
-    throw new ProvisioningError('ADMIN_PROVISION_TARGET is required.')
+    throw new ProvisioningError(`${targetSetting} is required.`)
   }
 
   const configuredTarget = getDatabaseTargetIdentifier(databaseUrl)
   if (expectedTarget.trim() !== configuredTarget) {
-    throw new ProvisioningError('ADMIN_PROVISION_TARGET does not match the configured database.')
+    throw new ProvisioningError(`${targetSetting} does not match the configured database.`)
   }
   if (!database) throw new ProvisioningError('Database connection is not configured.')
 
@@ -116,10 +128,10 @@ export async function provisionFirstAdmin({
     throw new ProvisioningError('Database target confirmation did not match; no database changes were made.')
   }
 
-  const username = await prompt('Admin username: ')
-  const displayName = await prompt('Admin display name: ')
-  const password = await passwordReader('Admin password (input hidden): ')
-  const passwordConfirmation = await passwordReader('Confirm admin password (input hidden): ')
+  const username = await prompt(`${roleLabel} username: `)
+  const displayName = await prompt(`${roleLabel} display name: `)
+  const password = await passwordReader(`${roleLabel} password (input hidden): `)
+  const passwordConfirmation = await passwordReader(`Confirm ${roleLabel.toLowerCase()} password (input hidden): `)
   if (password !== passwordConfirmation) {
     throw new ProvisioningError('Passwords do not match.')
   }
@@ -130,18 +142,22 @@ export async function provisionFirstAdmin({
 
   try {
     return await withTransaction(database, async (client) => {
-      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [adminProvisionLock])
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        [`queuemate:first-${role}-provision:v1`],
+      )
       await client.query('LOCK TABLE public.staff IN SHARE ROW EXCLUSIVE MODE')
 
       const admins = await client.query(
         `SELECT id
          FROM public.staff
-         WHERE role = 'admin'
+         WHERE role = $1
          LIMIT 1
          FOR UPDATE`,
+        [role],
       )
       if (admins.rows.length > 0) {
-        throw new ProvisioningError('An admin account already exists; no account was changed.')
+        throw new ProvisioningError(existingRoleMessage)
       }
 
       const usernameMatches = await client.query(
@@ -159,9 +175,9 @@ export async function provisionFirstAdmin({
       const inserted = await client.query(
         `INSERT INTO public.staff
            (username, password_hash, display_name, role, assigned_window_id, is_active)
-         VALUES ($1, $2, $3, 'admin', NULL, true)
+         VALUES ($1, $2, $3, $4, NULL, true)
          RETURNING id`,
-        [credentials.username, passwordHash, credentials.displayName],
+        [credentials.username, passwordHash, credentials.displayName, role],
       )
       const staffId = inserted.rows[0]?.id
       if (!staffId) {
@@ -179,7 +195,7 @@ export async function provisionFirstAdmin({
         !account
         || account.username !== credentials.username
         || account.display_name !== credentials.displayName
-        || account.role !== 'admin'
+        || account.role !== role
         || account.is_active !== true
         || account.assigned_window_id !== null
       ) {
@@ -205,8 +221,14 @@ export async function provisionFirstAdmin({
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const account = await provisionFirstAdmin()
-    console.log(`Administrator account created and verified: ${account.username} (active, no cashier window).`)
+    const roleArgument = process.argv[2]
+    if (roleArgument && roleArgument !== 'system-admin') {
+      throw new ProvisioningError('Use "system-admin" to provision a System Admin; omit it for the first Admin.')
+    }
+    const role = roleArgument === 'system-admin' ? 'system_admin' : 'admin'
+    const account = await provisionFirstAdmin({ role })
+    const label = role === 'system_admin' ? 'System Administrator' : 'Administrator'
+    console.log(`${label} account created and verified: ${account.username} (active, no cashier window).`)
   } catch (error) {
     console.error(error instanceof ProvisioningError ? error.message : 'Provisioning failed; no account was created.')
     process.exitCode = 1

@@ -44,6 +44,8 @@ class QueueHttpDatabase {
   async query(sql, values = []) {
     this.calls.push({ sql, values })
 
+    if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
+
     if (sql.includes('FROM staff s') && sql.includes('LEFT JOIN cashier_windows')) {
       return {
         rows: this.staff.is_active && values[0] === this.staff.username
@@ -145,6 +147,7 @@ class QueueHttpDatabase {
   async runTransactionQuery(sql, values = []) {
     this.calls.push({ sql, values })
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] }
+    if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
 
     if (sql.includes('FROM staff') && sql.includes('FOR UPDATE')
       && sql.includes("role = 'cashier'")) {

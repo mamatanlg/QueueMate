@@ -10,6 +10,10 @@ const flexibleMigrationUrl = new URL(
   '../../database/migrations/003_flexible_cashier_window_assignments.sql',
   import.meta.url,
 )
+const systemAdminMigrationUrl = new URL(
+  '../../database/migrations/004_system_admin_audit_logs.sql',
+  import.meta.url,
+)
 
 test('active cashier assignment migration guards conflicts and preserves historical rows', async () => {
   const migration = await readFile(migrationUrl, 'utf8')
@@ -34,4 +38,21 @@ test('flexible assignment migration permits unassigned cashiers and preserves ac
   assert.match(migration, /GROUP BY assigned_window_id[\s\S]*HAVING COUNT\(\*\) > 1/)
   assert.doesNotMatch(migration, /^\s*(INSERT|UPDATE|DELETE)\s+/im)
   assert.doesNotMatch(migration, /\b(?:REFERENCES|queue_tickets|queue_history)\b/i)
+})
+
+test('System Admin migration is additive and makes audit records append-only', async () => {
+  const migration = await readFile(systemAdminMigrationUrl, 'utf8')
+
+  assert.match(migration, /role IN \('cashier', 'admin', 'system_admin'\)/)
+  assert.match(migration, /role IN \('admin', 'system_admin'\) AND assigned_window_id IS NULL/)
+  assert.match(migration, /CREATE TABLE public\.audit_logs/)
+  assert.match(migration, /actor_staff_id uuid/)
+  assert.match(migration, /action varchar\(100\) NOT NULL/)
+  assert.match(migration, /details jsonb NOT NULL/)
+  assert.match(migration, /created_at timestamptz NOT NULL DEFAULT now\(\)/)
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/)
+  assert.match(migration, /BEFORE UPDATE OR DELETE ON public\.audit_logs/)
+  assert.match(migration, /RAISE EXCEPTION 'Audit log records are append-only'/)
+  assert.doesNotMatch(migration, /^\s*(INSERT|UPDATE|DELETE)\s+/im)
+  assert.doesNotMatch(migration, /\b(?:queue_tickets|queue_history)\b/i)
 })

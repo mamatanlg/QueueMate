@@ -675,12 +675,17 @@ export default function Cashier() {
   const { session, sessionNotice, signIn } = useAuth()
   const navigate = useNavigate()
 
-  if (session?.role === 'admin') return <Navigate to="/admin" replace />
+  if (session?.role === 'admin' || session?.role === 'system_admin') {
+    return <Navigate to="/admin" replace />
+  }
   if (session?.role === 'cashier') return <CashierDashboard />
 
   async function login(username, password) {
     const signedIn = await signIn(username, password)
-    navigate(signedIn.role === 'admin' ? '/admin' : '/cashier', { replace: true })
+    navigate(
+      ['admin', 'system_admin'].includes(signedIn.role) ? '/admin' : '/cashier',
+      { replace: true },
+    )
   }
 
   return (

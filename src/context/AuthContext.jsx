@@ -18,7 +18,7 @@ export function AuthProvider({ children }) {
     })
 
     const role = result?.role
-    const profile = role === 'admin' ? result.admin
+    const profile = role === 'admin' || role === 'system_admin' ? result.admin
       : role === 'cashier' ? result.cashier
         : null
     const expiresIn = Number(result?.expiresIn)

@@ -159,7 +159,7 @@ function PublicDisplay() {
             </div>
             <aside className="tv-qr-card" aria-label="QueueMate official queue-entry QR code">
               <div className="tv-qr-card__code">
-                <QRCodeSVG value={QUEUE_ENTRY_QR_PAYLOAD} size={96} level="M" includeMargin />
+                <QRCodeSVG value={QUEUE_ENTRY_QR_PAYLOAD} size={150} level="M" includeMargin />
               </div>
               <div className="tv-qr-card__copy">
                 <span>SCAN TO START QUEUE ENTRY</span>

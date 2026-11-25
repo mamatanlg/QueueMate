@@ -25,6 +25,7 @@ class ScriptedDatabase {
   async runQuery(sql, values = []) {
     this.calls.push({ sql, values })
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] }
+    if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
     const response = this.responses.shift()
     assert.ok(response, `Unexpected query: ${sql}`)
     if (response.match) assert.match(sql, response.match)
@@ -66,6 +67,7 @@ class ConcurrentQueueDatabase {
           client.releaseQueueLock = null
           return { rows: [] }
         }
+        if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
         if (sql.includes('FROM staff') && sql.includes("role = 'cashier'")) {
           const staffId = values[0]
           return {
@@ -169,6 +171,10 @@ test('ticket issuance increments the Manila daily counter and stores only a toke
   assert.match(response.ticketAccessToken, /^[A-Za-z0-9_-]{43}$/)
   assert.equal(ticketInsert.values[3], expectedHash)
   assert.notEqual(ticketInsert.values[3], response.ticketAccessToken)
+  const issuanceAudit = database.calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.equal(issuanceAudit.values[3], 'queue.ticket.issued')
+  assert.equal(issuanceAudit.values[0], null)
+  assert.equal(JSON.stringify(issuanceAudit.values).includes(response.ticketAccessToken), false)
   assert.equal(events[0].event, 'ticket:issued')
   assert.equal('ticketAccessToken' in events[0].payload, false)
   assert.match(
@@ -353,6 +359,9 @@ test('call next locks and claims the oldest waiting ticket, then alerts N-5', as
     events.some(({ payload }) => 'ticketAccessToken' in payload),
     false,
   )
+  const callAudit = database.calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.equal(callAudit.values[0], auth.staff_id)
+  assert.equal(callAudit.values[3], 'queue.ticket.called')
   database.assertDone()
 })
 
@@ -493,6 +502,8 @@ test('skipping completes only the assigned window current ticket and creates no 
 
   assert.equal(response.status, 'skipped')
   assert.equal(response.windowNumber, 4)
+  const audit = database.calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.equal(audit.values[3], 'queue.ticket.skipped')
   assert.deepEqual(events.map(({ event }) => event), ['ticket:skipped'])
   assert.equal(database.calls.some(({ sql }) => sql.includes('INSERT INTO notifications')), false)
   assert.equal(database.calls[4].values[0], ticketId)
@@ -525,6 +536,8 @@ test('completing a current ticket records completion and emits the public event'
 
   assert.equal(response.status, 'completed')
   assert.equal(events[0].event, 'ticket:completed')
+  const audit = database.calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.equal(audit.values[3], 'queue.ticket.completed')
   database.assertDone()
 })
 
@@ -555,5 +568,8 @@ test('window availability updates use the session-bound assigned window', async 
     event: 'window:updated',
     payload: { windowNumber: 2, status: 'available' },
   }])
+  const audit = database.calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.equal(audit.values[0], auth.staff_id)
+  assert.equal(audit.values[3], 'window.availability.changed')
   database.assertDone()
 })

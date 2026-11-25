@@ -1,5 +1,8 @@
 import { Router } from 'express'
-import { authenticateAdmin } from '../middleware/authenticate-cashier.js'
+import {
+  authenticateAdmin,
+  authorizeSystemAdmin,
+} from '../middleware/authenticate-cashier.js'
 import { validateRequest } from '../middleware/validate-request.js'
 import {
   createCashier,
@@ -11,6 +14,7 @@ import {
   setCashierActive,
   updateCashier,
 } from '../services/admin-service.js'
+import { listAuditLogs } from '../services/audit-service.js'
 import {
   cashierIdSchema,
   cashierStatusSchema,
@@ -49,6 +53,7 @@ export function createAdminRoutes({ database, sessionSecret }) {
     async (request, response) => {
       const cashier = await createCashier({
         database,
+        actor: request.auth,
         ...request.validated.body,
       })
       response.status(201).json(cashier)
@@ -64,6 +69,7 @@ export function createAdminRoutes({ database, sessionSecret }) {
     async (request, response) => {
       response.status(200).json(await updateCashier({
         database,
+        actor: request.auth,
         staffId: request.validated.params.staffId,
         ...request.validated.body,
       }))
@@ -80,6 +86,7 @@ export function createAdminRoutes({ database, sessionSecret }) {
       response.status(200).json(await setCashierActive({
         database,
         staffId: request.validated.params.staffId,
+        actor: request.auth,
         actorStaffId: request.auth.staff_id,
         isActive: request.validated.body.isActive,
       }))
@@ -99,6 +106,7 @@ export function createAdminRoutes({ database, sessionSecret }) {
     async (request, response) => {
       const result = await setAdminWindowAvailability({
         database,
+        actor: request.auth,
         windowId: request.validated.params.windowId,
         availabilityStatus: request.validated.body.availabilityStatus,
       })
@@ -114,6 +122,10 @@ export function createAdminRoutes({ database, sessionSecret }) {
       })
     },
   )
+
+  router.get('/audit-logs', authorizeSystemAdmin(), async (_request, response) => {
+    response.status(200).json({ auditLogs: await listAuditLogs({ database }) })
+  })
 
   return router
 }

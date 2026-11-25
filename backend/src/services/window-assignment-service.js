@@ -1,5 +1,6 @@
 import { HttpError } from '../middleware/http-error.js'
 import { withTransaction } from '../db/transaction.js'
+import { writeAuditLog } from './audit-service.js'
 
 export async function lockCashier(client, staffId) {
   const result = await client.query(
@@ -156,6 +157,7 @@ export async function listAvailableWindows({ database }) {
 
 export async function setCashierWindowAssignment({
   database,
+  actor,
   staffId,
   windowId,
 }) {
@@ -163,9 +165,21 @@ export async function setCashierWindowAssignment({
     return await withTransaction(database, async (client) => {
       const cashier = await lockCashier(client, staffId)
       if (!cashier.is_active) throw new HttpError(409, 'Cashier account is inactive')
-      await setCashierWindowInTransaction(client, cashier, windowId, {
+      const changed = await setCashierWindowInTransaction(client, cashier, windowId, {
         requireAvailable: windowId !== null,
       })
+      if (changed) {
+        await writeAuditLog(client, {
+          actor,
+          action: 'staff.account.updated',
+          affectedTable: 'staff',
+          affectedRecordId: staffId,
+          details: {
+            changedFields: ['assignedWindow'],
+            assignedWindowId: windowId,
+          },
+        })
+      }
       return { assignedWindowId: windowId }
     })
   } catch (error) {

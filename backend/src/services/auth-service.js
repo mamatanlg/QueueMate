@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import bcrypt from 'bcrypt'
 import jwt from 'jsonwebtoken'
 import { HttpError } from '../middleware/http-error.js'
+import { writeAuditLog } from './audit-service.js'
 
 const sessionDurationSeconds = 8 * 60 * 60
 const dummyPasswordHash = bcrypt.hash(randomBytes(32).toString('hex'), 12)
@@ -25,12 +26,28 @@ export async function login({ database, username, password, sessionSecret }) {
   const passwordMatches = await bcrypt.compare(password, passwordHash)
 
   if (!staff || !passwordMatches) {
+    await writeAuditLog(database, {
+      actor: staff ? {
+        id: staff.id,
+        username: staff.username,
+        role: staff.role,
+      } : null,
+      action: 'auth.login.failed',
+      affectedTable: staff ? 'staff' : null,
+      affectedRecordId: staff?.id ?? null,
+      details: {
+        username: normalizedUsername,
+        reason: 'invalid_credentials',
+      },
+    })
     throw new HttpError(401, 'Invalid username or password')
   }
 
   const isCashier = staff.role === 'cashier'
   const isAdmin = staff.role === 'admin' && staff.assigned_window_id === null
-  if (!isCashier && !isAdmin) {
+  const isSystemAdmin = staff.role === 'system_admin'
+    && staff.assigned_window_id === null
+  if (!isCashier && !isAdmin && !isSystemAdmin) {
     throw new HttpError(403, 'Account role or window assignment is invalid')
   }
 
@@ -42,6 +59,13 @@ export async function login({ database, username, password, sessionSecret }) {
      VALUES ($1, $2, $3)`,
     [sessionId, staff.id, expiresAt],
   )
+  await writeAuditLog(database, {
+    actor: staff,
+    action: 'auth.login.succeeded',
+    affectedTable: 'staff',
+    affectedRecordId: staff.id,
+    details: { username: staff.username },
+  })
 
   const token = jwt.sign(
     { sid: sessionId },

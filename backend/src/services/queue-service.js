@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { HttpError } from '../middleware/http-error.js'
 import { withTransaction } from '../db/transaction.js'
+import { writeAuditLog } from './audit-service.js'
 
 const ticketTokenBytes = 32
 
@@ -78,6 +79,17 @@ export async function issueTicket({ database, transactionType, publicEvent }) {
        VALUES ($1, 'issued', 'waiting', $2::jsonb)`,
       [ticket.id, JSON.stringify({ queueNumber, transactionType: type.name })],
     )
+    await writeAuditLog(client, {
+      actor: { username: 'public', role: 'public' },
+      action: 'queue.ticket.issued',
+      affectedTable: 'queue_tickets',
+      affectedRecordId: ticket.id,
+      details: {
+        queueNumber,
+        businessDate,
+        transactionType: type.name,
+      },
+    })
 
     return { ...ticket, transactionType: type.name }
   })
@@ -270,6 +282,17 @@ export async function setWindowAvailability({
          RETURNING window_number, availability_status`,
         [current.id, availabilityStatus],
       )
+      await writeAuditLog(client, {
+        actor: auth,
+        action: 'window.availability.changed',
+        affectedTable: 'cashier_windows',
+        affectedRecordId: current.id,
+        details: {
+          windowNumber: current.window_number,
+          previousStatus: current.availability_status,
+          availabilityStatus,
+        },
+      })
       return { window: updated.rows[0], changed: true }
     }
 
@@ -345,6 +368,18 @@ export async function callNext({ database, auth, publicEvent }) {
         JSON.stringify({ queueNumber: ticket.queue_number }),
       ],
     )
+    await writeAuditLog(client, {
+      actor: auth,
+      action: 'queue.ticket.called',
+      affectedTable: 'queue_tickets',
+      affectedRecordId: ticket.id,
+      details: {
+        queueNumber: ticket.queue_number,
+        businessDate: ticket.business_date,
+        transactionType: ticket.transaction_type,
+        windowNumber: window.window_number,
+      },
+    })
 
     const notifications = []
     const calledNotification = await client.query(
@@ -470,6 +505,17 @@ export async function finishCurrentTicket({
         JSON.stringify({ queueNumber: current.queue_number }),
       ],
     )
+    await writeAuditLog(client, {
+      actor: auth,
+      action: `queue.ticket.${status}`,
+      affectedTable: 'queue_tickets',
+      affectedRecordId: current.id,
+      details: {
+        queueNumber: current.queue_number,
+        businessDate: current.business_date,
+        windowNumber: window.window_number,
+      },
+    })
     return {
       ticketNumber: formatQueueNumber(current.queue_number),
       businessDate: current.business_date,

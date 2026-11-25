@@ -53,7 +53,9 @@ export function authenticateUser({ database, sessionSecret }) {
 
       const validCashier = staff.role === 'cashier'
       const validAdmin = staff.role === 'admin' && staff.assigned_window_id === null
-      if (!validCashier && !validAdmin) {
+      const validSystemAdmin = staff.role === 'system_admin'
+        && staff.assigned_window_id === null
+      if (!validCashier && !validAdmin && !validSystemAdmin) {
         next(new HttpError(403, 'Account role or window assignment is invalid'))
         return
       }
@@ -68,7 +70,10 @@ export function authenticateUser({ database, sessionSecret }) {
 
 function authorizeRole(role) {
   return (request, _response, next) => {
-    if (request.auth?.role !== role) {
+    const authorized = role === 'admin'
+      ? ['admin', 'system_admin'].includes(request.auth?.role)
+      : request.auth?.role === role
+    if (!authorized) {
       next(new HttpError(403, role === 'admin'
         ? 'Administrator access required'
         : 'Cashier access required'))
@@ -101,4 +106,15 @@ export function authenticateCashier(options) {
 
 export function authenticateAdmin(options) {
   return authenticateRole(options, 'admin')
+}
+
+export function authorizeSystemAdmin() {
+  return (request, _response, next) => {
+    if (request.auth?.role !== 'system_admin') {
+      next(new HttpError(403, 'System administrator access required'))
+      return
+    }
+
+    next()
+  }
 }

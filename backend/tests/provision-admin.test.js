@@ -40,22 +40,22 @@ function createDatabase({ staff = [], failVerification = false } = {}) {
       if (sql.includes('pg_advisory_xact_lock') || sql.startsWith('LOCK TABLE')) {
         return { rows: [] }
       }
-      if (sql.includes("WHERE role = 'admin'")) {
-        return { rows: state.staff.filter(({ role }) => role === 'admin').slice(0, 1) }
+      if (sql.includes('WHERE role = $1')) {
+        return { rows: state.staff.filter(({ role }) => role === values[0]).slice(0, 1) }
       }
       if (sql.includes('lower(username)')) {
         const username = values[0].toLowerCase()
         return { rows: state.staff.filter(({ username: existing }) => existing.toLowerCase() === username) }
       }
       if (sql.includes('INSERT INTO public.staff')) {
-        const [username, passwordHash, displayName] = values
+        const [username, passwordHash, displayName, role] = values
         const id = `staff-${username}`
         state.staff.push({
           id,
           username,
           password_hash: passwordHash,
           display_name: displayName,
-          role: 'admin',
+          role,
           is_active: true,
           assigned_window_id: null,
         })
@@ -232,6 +232,30 @@ test('creates and verifies an active admin with no window using bcrypt cost 12',
     role: 'admin',
     isActive: true,
     hasCashierWindow: false,
+  })
+
+  test('provisions a System Admin separately without changing an existing Admin', async () => {
+    const existingAdmin = {
+      id: 'existing-admin',
+      username: 'legacyadmin',
+      password_hash: 'unchanged-hash',
+      display_name: 'Legacy Admin',
+      role: 'admin',
+      is_active: true,
+      assigned_window_id: null,
+    }
+    const { database, state } = createDatabase({ staff: [existingAdmin] })
+    const existingBefore = structuredClone(existingAdmin)
+
+    const account = await provisionFirstAdmin(validOptions(database, {
+      role: 'system_admin',
+      expectedTarget: target,
+    }))
+
+    assert.equal(account.role, 'system_admin')
+    assert.equal(state.staff.length, 2)
+    assert.deepEqual(state.staff[0], existingBefore)
+    assert.equal(state.staff[1].role, 'system_admin')
   })
   assert.equal(state.staff.length, 2)
   assert.deepEqual(state.staff[0], before)
