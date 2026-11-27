@@ -3,15 +3,16 @@ services:
     name: queue-system
     runtime: node
     plan: free
-    buildCommand: npm install && npm run build
-    startCommand: node server/index.js
-    healthCheckPath: /api/status
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/v1/health/database
     envVars:
       - key: NODE_ENV
         value: production
-      - key: SUPABASE_URL
+      - key: DATABASE_URL
         sync: false
-      - key: SUPABASE_SERVICE_KEY
+      - key: SESSION_SECRET
         sync: false
-      - key: SUPABASE_ANON_KEY
+      - key: CLIENT_ORIGINS
         sync: false

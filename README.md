@@ -29,7 +29,51 @@ Mobile app (Expo) ─────┘
 | `database/` | PostgreSQL schema and migrations | Persistent shared queue and application data |
 | `docs/` | Project documentation | Architecture and implementation notes |
 
-The repository also retains a root-level Vite/React and Express application (`src/`, `server/`, and root package files). Its existing `/cashier` portal is the PC login surface for the current cashier/admin integration; `/admin` is the protected administrator workspace. The separate `cashier-web/`, `public-display/`, and `mobile-app/` projects remain distinct from that root application.
+The current authenticated cashier/admin frontend and public display are routes in the root Vite/React application (`src/`). The authenticated API is the separate Express/PostgreSQL backend in `backend/`. The `cashier-web/` and `public-display/` directories are placeholders, not separate deployable frontends. The root `server/` directory is a legacy application and is not the authenticated API.
+
+## Current local development
+
+Run the backend and Vite frontend in separate terminals. Do not use the legacy root server for authenticated `/api/v1` requests.
+
+**Terminal 1 — backend**, from the repository root:
+
+```powershell
+Set-Location backend
+npm run dev
+```
+
+The backend listens on port `4000` by default. It requires `DATABASE_URL` and `SESSION_SECRET`; `CLIENT_ORIGINS` should allow the frontend origin. `NODE_ENV` selects the environment, and `PORT` can override the default. For the first administrator provisioning command only, `ADMIN_PROVISION_TARGET` is also required.
+
+**Terminal 2 — frontend**, from the repository root:
+
+```powershell
+npm run dev
+```
+
+This starts Vite only. Vite normally reports `Local: http://localhost:5173/`; open the exact `Local` URL it prints if the port is busy and Vite selects another one. The cashier, admin, display, and student web routes are under this frontend. In development, `vite.config.js` proxies `/api/v1` and `/socket.io` to `http://localhost:4000`. Backend development CORS already allows the default localhost Vite origin.
+
+For a separately hosted production frontend, set the build-time variable `VITE_API_BASE_URL` to the backend API base URL ending in `/api/v1`. Set `CLIENT_ORIGINS` on the backend to the frontend's exact browser origin.
+
+### Expo mobile app
+
+The mobile app calls the same backend directly. Copy `mobile-app/.env.example` to `mobile-app/.env` and set `EXPO_PUBLIC_API_BASE_URL` to the backend API URL ending in `/api/v1`. When running on a physical phone against a computer-hosted backend, use the computer's LAN IPv4 address, for example `http://192.168.1.25:4000/api/v1`—never `localhost`. Keep the phone and computer on the same network, allow inbound port `4000` through the computer firewall, and restart Expo after changing `.env`:
+
+```powershell
+Copy-Item mobile-app\.env.example mobile-app\.env
+# Edit mobile-app\.env and replace the example IP with the computer's LAN IP
+Set-Location mobile-app
+npm start
+```
+
+The mobile app uses the public `POST /api/v1/public/tickets`, `GET /api/v1/public/tickets/:ticketId`, and `GET /api/v1/public/queue` routes. Ticket credentials are stored in the platform's secure storage so a notification tap can restore that ticket; no backend credentials or secrets are included in the app.
+
+Remote push alerts additionally require the backend migration `005_ticket_push_notifications.sql`, a backend-only `EXPO_PUSH_TOKEN_ENCRYPTION_KEY`, and Android FCM credentials configured for an EAS project. Set the non-secret `EXPO_PUBLIC_EAS_PROJECT_ID` in `mobile-app/.env` when available. Build and install a custom development/production app to test remote push; Android Expo Go does not support remote push. The app will continue live in-app monitoring and show an explicit notice if background push cannot be configured.
+
+## Backend deployment configuration
+
+`render.yaml` configures the authenticated backend from the `backend/` directory. Render requires `DATABASE_URL`, `SESSION_SECRET`, and `CLIENT_ORIGINS`; `NODE_ENV` is set to production and Render supplies `PORT`. The health check uses the existing `/api/v1/health/database` route, which returns success only when the database connection check succeeds.
+
+This Render service deploys the backend only; it does not deploy the Vite frontend. Host the frontend separately and configure its `VITE_API_BASE_URL` as described above. Set environment variable values in the hosting provider's environment settings; do not put secrets in this README or commit them.
 
 ### Queue rules the backend must enforce
 
@@ -38,7 +82,7 @@ The repository also retains a root-level Vite/React and Express application (`sr
 - Keep the cashier assignments fixed: Cashier 1 → Window 1, Cashier 2 → Window 2, Cashier 3 → Window 3, and Cashier 4 → Window 4. Each cashier can operate only their assigned window.
 - When a cashier calls next, the backend assigns the oldest waiting number to that cashier's window. The operation must be atomic so two cashiers cannot call the same number or skip an older waiting number.
 - An unavailable window cannot receive a new assignment. When it becomes available, its cashier may call the next waiting number.
-- For ticket 010, calling 005 triggers the approaching alert; calling 010 triggers the called alert with the assigned window. Trigger each alert once per ticket, using sound and vibration when supported and permitted.
+- Create approaching alerts when a ticket enters the configured near-turn waiting-position threshold, including when a new ticket is already within that threshold. Calling a ticket triggers its called alert with the assigned window. Trigger each alert once per ticket, using sound and vibration when supported and permitted.
 - Students and parents do not need accounts. Cashier and administrator functions require authentication.
 - On mobile, show the customer's number and status plus all four current serving numbers. Do not show an assigned window until that customer's ticket has been called.
 
@@ -69,10 +113,8 @@ QueueMate/
 2. **Queue API and real-time events:** Implement backend endpoints and Socket.IO updates; verify concurrent calls, oldest-first behavior, unavailable windows, and once-per-ticket alerts.
 3. **Cashier web:** Build authenticated cashier sign-in and assigned-window queue controls against the shared backend.
 4. **Public display:** Build the TV view for all four windows, latest issued number, statuses, and public QR code.
-5. **Mobile app:** Build QR scanning, transaction selection, ticket tracking, and permitted sound/vibration alerts.
+5. **Mobile app:** Maintain the Expo client integration for QR entry, ticket creation, live tracking, and queue alerts.
 6. **Integration and deployment:** Test all clients against the same backend/database, validate LAN development access, then configure the public HTTPS deployment.
-
-Do not install packages or initialize these applications until the setup plan is approved. No new application code has been added as part of this structure preparation.
 
 ## Legacy application reference
 
@@ -177,44 +219,9 @@ The following sections describe the pre-existing Vite/React queue application re
 
 ---
 
-## Quick Start
+## Legacy application setup and deployment
 
-```bash
-# Clone
-git clone https://github.com/krispx2811/Queue-System.git
-cd Queue-System
-
-# Install
-npm install
-
-# Configure Supabase
-cp .env.example .env
-# Edit .env with your Supabase credentials
-
-# Run schema once in Supabase SQL Editor (server/schema.sql)
-
-# Run (starts both server + frontend)
-npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173)
-
----
-
-## Deploy to Render (Free)
-
-One-click deploy from GitHub:
-
-1. Sign up at [render.com](https://render.com)
-2. **New** → **Web Service** → connect your GitHub repo
-3. Render auto-detects `render.yaml`
-4. Add environment variables under "Environment":
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_KEY`
-   - `SUPABASE_ANON_KEY`
-5. Click **Create Web Service** — done in ~3 minutes
-
-**Prevent spin-down:** Render free tier sleeps after 15 min idle. Set up a free monitor at [uptimerobot.com](https://uptimerobot.com) to ping `https://your-app.onrender.com/api/status` every 5 minutes.
+The following legacy architecture and endpoint descriptions are historical reference only. Its root `server/index.js` process is not the authenticated `/api/v1` backend and must not be used as the production API for the current frontend. Use the current local development and backend deployment instructions above.
 
 ---
 

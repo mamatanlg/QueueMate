@@ -436,7 +436,9 @@ function CashierDashboard() {
         <div className="cashier-sidebar__counter">
           <span className="cashier-sidebar__counter-icon"><Icon name="window" size={18} /></span>
           <div><small>YOUR COUNTER</small><strong>{windowInfo?.name ?? 'Loading…'}</strong></div>
-          <span className={`cashier-status-dot ${available ? 'is-available' : ''}`} />
+          <span
+            className={`cashier-status-dot ${available ? 'is-available' : 'is-unavailable'}`}
+          />
         </div>
         <div className="cashier-sidebar__profile">
           <span className="cashier-avatar">{initials(cashier?.displayName ?? '')}</span>
@@ -493,7 +495,11 @@ function CashierDashboard() {
                   <div><span>ASSIGNED WINDOW</span><strong>{windowInfo?.name ?? 'Loading…'}</strong></div>
                   <span className="cashier-window-panel__divider" />
                   <div className="cashier-window-panel__availability">
-                    <span className={`cashier-availability-indicator ${available ? 'is-available' : ''}`} />
+                    <span
+                      className={`cashier-availability-indicator ${
+                        available ? 'is-available' : 'is-unavailable'
+                      }`}
+                    />
                     <div><span>STATUS</span><strong className={available ? 'text-available' : 'text-unavailable'}>{available ? 'Available' : 'Unavailable'}</strong></div>
                   </div>
                 </div>
@@ -675,12 +681,17 @@ export default function Cashier() {
   const { session, sessionNotice, signIn } = useAuth()
   const navigate = useNavigate()
 
-  if (session?.role === 'admin') return <Navigate to="/admin" replace />
+  if (session?.role === 'admin' || session?.role === 'system_admin') {
+    return <Navigate to="/admin" replace />
+  }
   if (session?.role === 'cashier') return <CashierDashboard />
 
   async function login(username, password) {
     const signedIn = await signIn(username, password)
-    navigate(signedIn.role === 'admin' ? '/admin' : '/cashier', { replace: true })
+    navigate(
+      ['admin', 'system_admin'].includes(signedIn.role) ? '/admin' : '/cashier',
+      { replace: true },
+    )
   }
 
   return (

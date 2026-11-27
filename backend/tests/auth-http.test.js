@@ -33,6 +33,8 @@ class AuthHttpDatabase {
   async query(sql, values = []) {
     this.calls.push({ sql, values })
 
+    if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
+
     if (sql.includes('FROM staff s') && sql.includes('LEFT JOIN cashier_windows')) {
       return {
         rows: this.staff.is_active && values[0] === this.staff.username
@@ -102,6 +104,7 @@ class AuthHttpDatabase {
       query: async (sql, values = []) => {
         this.calls.push({ sql, values })
         if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] }
+        if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
 
         if (sql.includes('FROM staff') && sql.includes("role = 'cashier'")
           && sql.includes('FOR UPDATE')) {
@@ -145,7 +148,7 @@ class AuthHttpDatabase {
         if (sql.includes("VALUES ($1, 'called')")) {
           return { rows: [{ id: 'notification-1' }] }
         }
-        if (sql.includes('WHERE business_date = $1 AND queue_number = $2')) {
+        if (sql.includes('ROW_NUMBER() OVER')) {
           return { rows: [] }
         }
 

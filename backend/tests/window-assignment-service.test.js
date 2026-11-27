@@ -47,6 +47,7 @@ class AssignmentDatabase {
       unlockWindow: null,
       release: () => {},
       query: async (sql, values = []) => {
+        if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
         if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) {
           if (sql === 'COMMIT' || sql === 'ROLLBACK') {
             client.unlockWindow?.()

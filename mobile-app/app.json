@@ -19,6 +19,20 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-audio",
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./assets/near-turn.wav",
+            "./assets/called.wav"
+          ]
+        }
+      ],
+      "expo-asset",
+      "expo-secure-store"
+    ]
   }
 }

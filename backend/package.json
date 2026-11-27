@@ -8,7 +8,8 @@
     "dev": "node --watch src/server.js",
     "test": "node --test",
     "seed:cashiers": "node scripts/seed-cashiers.js",
-    "provision:admin": "node scripts/provision-admin.js"
+    "provision:admin": "node scripts/provision-admin.js",
+    "provision:system-admin": "node scripts/provision-admin.js system-admin"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

@@ -22,8 +22,14 @@ function RequireRole({ role, children }) {
       />
     )
   }
-  if (session.role !== role) {
-    return <Navigate to={session.role === 'admin' ? '/admin' : '/cashier'} replace />
+  const authorized = role === 'admin'
+    ? ['admin', 'system_admin'].includes(session.role)
+    : session.role === role
+  if (!authorized) {
+    return <Navigate
+      to={['admin', 'system_admin'].includes(session.role) ? '/admin' : '/cashier'}
+      replace
+    />
   }
 
   return children

@@ -82,11 +82,12 @@ test('cashier login verifies a bcrypt hash and creates a revocable JWT session',
 
   const result = await login({
     database,
-    username: 'cashier1',
+    username: 'Cashier1',
     password: 'test-password-12',
     sessionSecret,
   })
 
+  assert.equal(calls[0].values[0], 'cashier1')
   const claims = jwt.verify(result.accessToken, sessionSecret, {
     algorithms: ['HS256'],
     audience: 'queuemate-cashier',
@@ -99,8 +100,8 @@ test('cashier login verifies a bcrypt hash and creates a revocable JWT session',
   assert.match(calls[1].sql, /INSERT INTO auth_sessions/)
 
   await logout({ database, sessionId: claims.sid })
-  assert.match(calls[2].sql, /SET revoked_at = NOW\(\)/)
-  assert.deepEqual(calls[2].values, [claims.sid])
+  assert.match(calls[3].sql, /SET revoked_at = NOW\(\)/)
+  assert.deepEqual(calls[3].values, [claims.sid])
 })
 
 test('admin login succeeds without an assigned window', async () => {
@@ -135,6 +136,38 @@ test('admin login succeeds without an assigned window', async () => {
     sessionSecret,
   })
 
+  test('System Admin login returns the admin identity shape without promoting legacy admins', async () => {
+    const passwordHash = await bcrypt.hash('test-password-12', 4)
+    const database = {
+      async query(sql) {
+        if (sql.includes('FROM staff s')) {
+          return { rows: [{
+            id: randomUUID(),
+            username: 'sysadmin1',
+            password_hash: passwordHash,
+            display_name: 'System Admin One',
+            role: 'system_admin',
+            assigned_window_id: null,
+          }] }
+        }
+        return { rows: [] }
+      },
+    }
+
+    const result = await login({
+      database,
+      username: 'sysadmin1',
+      password: 'test-password-12',
+      sessionSecret,
+    })
+
+    assert.equal(result.role, 'system_admin')
+    assert.deepEqual(result.admin, {
+      username: 'sysadmin1',
+      displayName: 'System Admin One',
+    })
+  })
+
   assert.equal(result.role, 'admin')
   assert.deepEqual(result.admin, {
     username: 'admin1',
@@ -145,8 +178,10 @@ test('admin login succeeds without an assigned window', async () => {
 })
 
 test('cashier login rejects incorrect passwords without disclosing account state', async () => {
+  const calls = []
   const database = {
-    async query() {
+    async query(sql, values) {
+      calls.push({ sql, values })
       return {
         rows: [{
           id: randomUUID(),
@@ -168,6 +203,10 @@ test('cashier login rejects incorrect passwords without disclosing account state
     (error) => error.status === 401
       && error.message === 'Invalid username or password',
   )
+  const failedLogin = calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.ok(failedLogin)
+  assert.equal(failedLogin.values[3], 'auth.login.failed')
+  assert.equal(JSON.stringify(failedLogin.values).includes('incorrect-password'), false)
 })
 
 test('login rejects an unknown username without disclosing account state', async () => {
@@ -233,12 +272,20 @@ test('cashier authentication derives window identity from the active session', a
 
 test('role authorization accepts the matching account role and rejects the other role', async () => {
   const adminFixture = middlewareFixture('admin')
+  const systemAdminFixture = middlewareFixture('system_admin')
   const cashierFixture = middlewareFixture('cashier')
 
   assert.equal(
     await runMiddleware(
       authenticateAdmin(adminFixture.middlewareOptions),
       adminFixture.request,
+    ),
+    undefined,
+  )
+  assert.equal(
+    await runMiddleware(
+      authenticateAdmin(systemAdminFixture.middlewareOptions),
+      systemAdminFixture.request,
     ),
     undefined,
   )

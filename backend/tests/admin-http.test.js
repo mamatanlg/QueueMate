@@ -104,6 +104,9 @@ class AdminHttpDatabase {
   async query(sql, values = []) {
     this.calls.push({ sql, values })
 
+    if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
+    if (sql.includes('FROM audit_logs')) return { rows: [] }
+
     if (sql.includes('FROM staff s') && sql.includes('WHERE s.username = $1')) {
       const staff = this.staff.find((account) => (
         account.is_active && account.username === values[0]
@@ -205,6 +208,7 @@ class AdminHttpDatabase {
 
   async transactionQuery(sql, values = []) {
     this.calls.push({ sql, values })
+    if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
     if (sql === 'BEGIN') {
       this.snapshot = {
         staff: this.staff.map((staff) => ({ ...staff })),
@@ -423,6 +427,7 @@ test('admin endpoints require authentication and reject cashiers', async (t) => 
   const forbidden = await requestJson(server.origin, '/api/v1/admin/cashiers', {
     token: cashier,
   })
+
   assert.equal(forbidden.status, 403)
   const forbiddenStaff = await requestJson(server.origin, '/api/v1/admin/staff', {
     token: cashier,
@@ -455,6 +460,35 @@ test('admin endpoints require authentication and reject cashiers', async (t) => 
   assert.equal(staff.body.staff.some((account) => 'password_hash' in account), false)
 })
 
+test('System Admin can use admin endpoints and audit logs while Admin cannot read audit logs', async (t) => {
+  const database = new AdminHttpDatabase()
+  database.staff.push(makeStaff({
+    username: 'sysadmin1',
+    displayName: 'System Admin One',
+    role: 'system_admin',
+  }))
+  const server = await startTestServer(database)
+  t.after(() => server.close())
+
+  const adminAudit = await requestJson(server.origin, '/api/v1/admin/audit-logs', {
+    token: adminToken(database),
+  })
+  assert.equal(adminAudit.status, 403)
+
+  const systemAdmin = sessionToken(database, 'sysadmin1')
+  const staff = await requestJson(server.origin, '/api/v1/admin/staff', {
+    token: systemAdmin,
+  })
+  assert.equal(staff.status, 200)
+  assert.ok(staff.body.staff.some(({ role }) => role === 'system_admin'))
+
+  const audit = await requestJson(server.origin, '/api/v1/admin/audit-logs', {
+    token: systemAdmin,
+  })
+  assert.equal(audit.status, 200)
+  assert.deepEqual(audit.body, { auditLogs: [] })
+})
+
 test('admin can change window availability but cashiers cannot use the admin endpoint', async (t) => {
   const database = new AdminHttpDatabase()
   const server = await startTestServer(database)
@@ -473,6 +507,12 @@ test('admin can change window availability but cashiers cannot use the admin end
     status: 'available',
   })
   assert.equal(window.availability_status, 'available')
+  const audit = database.calls.find(({ sql, values }) => (
+    sql.includes('INSERT INTO audit_logs')
+    && values[3] === 'window.availability.changed'
+  ))
+  assert.ok(audit)
+  assert.equal(audit.values[0], database.staff[0].id)
 
   const forbidden = await requestJson(server.origin, `/api/v1/admin/windows/${database.windows[1].id}/status`, {
     method: 'PATCH',
@@ -508,6 +548,13 @@ test('admin can view cashier details and create a cashier without exposing secre
   const stored = database.staff.find(({ id }) => id === created.body.id)
   assert.equal(stored.role, 'cashier')
   assert.equal(await bcrypt.compare('new-cashier-password', stored.password_hash), true)
+  const creationAudit = database.calls.find(({ sql, values }) => (
+    sql.includes('INSERT INTO audit_logs')
+    && values[3] === 'staff.account.created'
+  ))
+  assert.ok(creationAudit)
+  assert.equal(creationAudit.values[0], database.staff[0].id)
+  assert.equal(JSON.stringify(creationAudit.values).includes('new-cashier-password'), false)
 
   const detail = await requestJson(
     server.origin,
@@ -785,6 +832,12 @@ test('admin can update cashier details and reassign to an unoccupied window', as
   assert.equal(updated.status, 200)
   assert.equal(updated.body.displayName, 'Updated Cashier')
   assert.equal(updated.body.assignedWindow.id, database.windows[1].id)
+  const updateAudit = database.calls.find(({ sql, values }) => (
+    sql.includes('INSERT INTO audit_logs')
+    && values[3] === 'staff.account.updated'
+  ))
+  assert.ok(updateAudit)
+  assert.equal(updateAudit.values[0], database.staff[0].id)
 
   const revokedSession = await requestJson(
     server.origin,

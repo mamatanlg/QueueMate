@@ -43,6 +43,7 @@ export function createCashierRoutes({ database, sessionSecret }) {
     async (request, response) => {
       response.status(200).json(await setCashierWindowAssignment({
         database,
+        actor: request.auth,
         staffId: request.auth.staff_id,
         windowId: request.validated.body.windowId,
       }))

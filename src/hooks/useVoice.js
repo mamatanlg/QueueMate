@@ -1,10 +1,8 @@
 import { getLangCode } from '../utils/i18n'
 
 let currentAudio = null
-let aborted = false
 
 function stopAll() {
-  aborted = true
   window.speechSynthesis?.cancel()
   if (currentAudio) {
     currentAudio.pause()
@@ -61,7 +59,6 @@ export async function fetchElevenLabsVoices() {
 
 function speakGoogle(text, lang) {
   return new Promise((resolve) => {
-    aborted = false
     try {
       const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${lang}&q=${encodeURIComponent(text)}`
       const audio = new Audio(url)
@@ -134,8 +131,6 @@ function speakWeb(text, lang) {
 
 // Speak one language, using ElevenLabs if configured, else Google → Web fallback
 async function speakSequential(text, lang, settings = {}) {
-  aborted = false
-
   // Try ElevenLabs first if configured
   if (settings.ttsProvider === 'elevenlabs' && settings.elevenLabsApiKey) {
     try {

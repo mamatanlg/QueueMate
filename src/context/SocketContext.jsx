@@ -1,7 +1,6 @@
-import { createContext, useContext, useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { io } from 'socket.io-client'
-
-const Ctx = createContext(null)
+import { Ctx } from './socket-context'
 
 function LicenseGate({ emit, onActivated }) {
   const [key, setKey] = useState('')
@@ -145,10 +144,4 @@ export function SocketProvider({ children }) {
       {children}
     </Ctx.Provider>
   )
-}
-
-export function useSocket() {
-  const ctx = useContext(Ctx)
-  if (!ctx) throw new Error('useSocket must be inside SocketProvider')
-  return ctx
 }

@@ -5,6 +5,16 @@ const emptyToUndefined = (value) => (
   typeof value === 'string' && value.trim() === '' ? undefined : value
 )
 
+const pushTokenEncryptionKey = z.preprocess(
+  emptyToUndefined,
+  z.string()
+    .refine((value) => {
+      const decoded = Buffer.from(value, 'base64')
+      return decoded.length === 32 && decoded.toString('base64') === value
+    }, 'EXPO_PUSH_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key')
+    .optional(),
+)
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
@@ -17,6 +27,11 @@ const envSchema = z.object({
   SESSION_SECRET: z.preprocess(
     emptyToUndefined,
     z.string().min(32).optional(),
+  ),
+  EXPO_PUSH_TOKEN_ENCRYPTION_KEY: pushTokenEncryptionKey,
+  EXPO_PUSH_ACCESS_TOKEN: z.preprocess(
+    emptyToUndefined,
+    z.string().min(1).optional(),
   ),
   CLIENT_ORIGINS: z.string().optional().default(''),
 }).superRefine((env, context) => {
@@ -70,6 +85,8 @@ export const config = Object.freeze({
   port: env.PORT,
   databaseUrl: env.DATABASE_URL,
   sessionSecret: env.SESSION_SECRET,
+  expoPushTokenEncryptionKey: env.EXPO_PUSH_TOKEN_ENCRYPTION_KEY,
+  expoPushAccessToken: env.EXPO_PUSH_ACCESS_TOKEN,
   clientOrigins: Object.freeze(
     [...new Set([
       ...(env.NODE_ENV === 'development' ? defaultDevelopmentOrigins : []),

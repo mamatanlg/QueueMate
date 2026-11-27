@@ -1,6 +1,7 @@
 import bcrypt from 'bcrypt'
 import { HttpError } from '../middleware/http-error.js'
 import { withTransaction } from '../db/transaction.js'
+import { writeAuditLog } from './audit-service.js'
 import {
   assertNoServingTicket,
   lockAssignableWindow,
@@ -141,6 +142,7 @@ export async function getCashier({ database, staffId }) {
 
 export async function createCashier({
   database,
+  actor,
   username,
   displayName,
   password,
@@ -161,6 +163,18 @@ export async function createCashier({
          RETURNING id`,
         [normalizedUsername, passwordHash, displayName.trim(), windowId ?? null],
       )
+      await writeAuditLog(client, {
+        actor,
+        action: 'staff.account.created',
+        affectedTable: 'staff',
+        affectedRecordId: result.rows[0].id,
+        details: {
+          username: normalizedUsername,
+          displayName: displayName.trim(),
+          role: 'cashier',
+          assignedWindowId: windowId ?? null,
+        },
+      })
       return findCashier(client, result.rows[0].id)
     })
   } catch (error) {
@@ -173,6 +187,7 @@ export async function createCashier({
 
 export async function updateCashier({
   database,
+  actor,
   staffId,
   username,
   displayName,
@@ -198,18 +213,23 @@ export async function updateCashier({
 
       const updates = []
       const values = []
+      const changedFields = []
       if (normalizedUsername !== undefined) {
         values.push(normalizedUsername)
         updates.push(`username = $${values.length}`)
+        changedFields.push('username')
       }
       if (displayName !== undefined) {
         values.push(displayName.trim())
         updates.push(`display_name = $${values.length}`)
+        changedFields.push('displayName')
       }
       if (passwordHash !== undefined) {
         values.push(passwordHash)
         updates.push(`password_hash = $${values.length}`)
+        changedFields.push('password')
       }
+      if (windowChanged) changedFields.push('assignedWindow')
       updates.push('updated_at = NOW()')
       values.push(staffId)
 
@@ -219,6 +239,18 @@ export async function updateCashier({
          WHERE id = $${values.length} AND role = 'cashier'`,
         values,
       )
+      await writeAuditLog(client, {
+        actor,
+        action: 'staff.account.updated',
+        affectedTable: 'staff',
+        affectedRecordId: staffId,
+        details: {
+          changedFields,
+          ...(normalizedUsername === undefined ? {} : { username: normalizedUsername }),
+          ...(displayName === undefined ? {} : { displayName: displayName.trim() }),
+          ...(windowChanged ? { assignedWindowId: windowId } : {}),
+        },
+      })
 
       if (normalizedUsername !== undefined
         || passwordHash !== undefined
@@ -240,6 +272,7 @@ export async function updateCashier({
 
 export async function setCashierActive({
   database,
+  actor,
   staffId,
   actorStaffId,
   isActive,
@@ -265,6 +298,15 @@ export async function setCashierActive({
          RETURNING id`,
         [staffId, isActive],
       )
+      if (cashier.is_active !== isActive) {
+        await writeAuditLog(client, {
+          actor,
+          action: 'staff.account.status_changed',
+          affectedTable: 'staff',
+          affectedRecordId: staffId,
+          details: { isActive },
+        })
+      }
 
       if (!isActive || !cashier.is_active) {
         await client.query(
@@ -307,6 +349,7 @@ export async function listWindows({ database }) {
 
 export async function setAdminWindowAvailability({
   database,
+  actor,
   windowId,
   availabilityStatus,
 }) {
@@ -335,6 +378,17 @@ export async function setAdminWindowAvailability({
        RETURNING window_number, availability_status`,
       [windowId, availabilityStatus],
     )
+    await writeAuditLog(client, {
+      actor,
+      action: 'window.availability.changed',
+      affectedTable: 'cashier_windows',
+      affectedRecordId: windowId,
+      details: {
+        windowNumber: current.window_number,
+        previousStatus: current.availability_status,
+        availabilityStatus,
+      },
+    })
     return {
       windowNumber: updated.rows[0].window_number,
       status: updated.rows[0].availability_status,

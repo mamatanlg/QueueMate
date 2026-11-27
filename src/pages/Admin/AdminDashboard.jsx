@@ -4,7 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 import './AdminDashboard.css'
 
-const navigationItems = [
+const baseNavigationItems = [
   { id: 'overview', label: 'Overview' },
   { id: 'users', label: 'User Management' },
   { id: 'windows', label: 'Window Management' },
@@ -256,9 +256,16 @@ function ReportsPage() {
 export default function AdminDashboard() {
   const { session, request, signOut } = useAuth()
   const navigate = useNavigate()
+  const isSystemAdmin = session.role === 'system_admin'
+  const navigationItems = [
+    ...baseNavigationItems,
+    ...(isSystemAdmin ? [{ id: 'audit', label: 'Audit Logs' }] : []),
+  ]
   const [view, setView] = useState('overview')
   const [staffAccounts, setStaffAccounts] = useState([])
   const [windows, setWindows] = useState([])
+  const [auditLogs, setAuditLogs] = useState([])
+  const [queueMonitor, setQueueMonitor] = useState(null)
   const [loading, setLoading] = useState(true)
   const [dataLoaded, setDataLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -272,19 +279,27 @@ export default function AdminDashboard() {
     setLoading(true)
     setError('')
     try {
-      const [staffResponse, windowResponse] = await Promise.all([
+      const [staffResponse, windowResponse, auditResponse, queueResponse] = await Promise.all([
         request('/admin/staff'),
         request('/admin/windows'),
+        isSystemAdmin
+          ? request('/admin/audit-logs')
+          : Promise.resolve({ auditLogs: [] }),
+        isSystemAdmin
+          ? request('/public/queue')
+          : Promise.resolve(null),
       ])
       setStaffAccounts(staffResponse.staff)
       setWindows(windowResponse.windows)
+      setAuditLogs(auditResponse.auditLogs)
+      setQueueMonitor(queueResponse)
       setDataLoaded(true)
     } catch (loadError) {
       if (loadError.status !== 401) setError(loadError.message)
     } finally {
       setLoading(false)
     }
-  }, [request])
+  }, [isSystemAdmin, request])
 
   useEffect(() => {
     refresh()
@@ -479,7 +494,7 @@ export default function AdminDashboard() {
             <div className="admin-sidebar__spacer" />
             <div className="admin-sidebar__account">
               <span className="admin-avatar">{initials(session.profile.displayName)}</span>
-              <span><strong>{session.profile.displayName}</strong><small>Administrator</small></span>
+              <span><strong>{session.profile.displayName}</strong><small>{isSystemAdmin ? 'System Administrator' : 'Administrator'}</small></span>
               <button className="admin-logout" onClick={logout} type="button">Sign out</button>
             </div>
           </aside>
@@ -526,9 +541,25 @@ export default function AdminDashboard() {
                   {view === 'overview' && (
                     <>
                       <section className="admin-metrics" aria-label="Account and window overview">
+                        {isSystemAdmin && (
+                          <>
+                            <article className="admin-metric-card">
+                              <span>Tickets waiting</span><strong>{queueMonitor?.waitingCount ?? '—'}</strong>
+                              <small>Current business day</small>
+                            </article>
+                            <article className="admin-metric-card">
+                              <span>Latest queue number</span><strong>{queueMonitor?.latestIssuedQueueNumber ?? '—'}</strong>
+                              <small>Current business day</small>
+                            </article>
+                            <article className="admin-metric-card">
+                              <span>Windows serving</span><strong>{queueMonitor?.windows.filter((window) => window.currentTicketNumber).length ?? '—'}</strong>
+                              <small>Live queue operations</small>
+                            </article>
+                          </>
+                        )}
                         <article className="admin-metric-card">
                           <span>Total staff accounts</span><strong>{staffAccounts.length}</strong>
-                          <small>Admin and cashier accounts</small>
+                          <small>System-wide staff accounts</small>
                         </article>
                         <article className="admin-metric-card">
                           <span>Active cashiers</span><strong>{activeCashiers}</strong>
@@ -609,8 +640,10 @@ export default function AdminDashboard() {
                                   <td>@{account.username}</td>
                                   <td>{account.displayName}</td>
                                   <td>
-                                    <span className={`admin-pill ${account.role === 'admin' ? 'admin-pill--admin' : 'admin-pill--cashier'}`}>
-                                      {account.role === 'admin' ? 'Administrator' : 'Cashier'}
+                                    <span className={`admin-pill ${account.role === 'cashier' ? 'admin-pill--cashier' : 'admin-pill--admin'}`}>
+                                      {account.role === 'system_admin'
+                                        ? 'System Admin'
+                                        : account.role === 'admin' ? 'Administrator' : 'Cashier'}
                                     </span>
                                   </td>
                                   <td>{account.role === 'cashier'
@@ -692,6 +725,48 @@ export default function AdminDashboard() {
                   )}
 
                   {view === 'reports' && <ReportsPage />}
+
+                  {view === 'audit' && isSystemAdmin && (
+                    <section className="admin-panel">
+                      <div className="admin-section-heading">
+                        <div>
+                          <span className="admin-eyebrow">APPEND-ONLY ACTIVITY RECORDS</span>
+                          <h2>Audit Logs</h2>
+                        </div>
+                      </div>
+                      <div className="admin-table-wrap">
+                        <table className="admin-table">
+                          <thead>
+                            <tr>
+                              <th>Timestamp</th>
+                              <th>Actor</th>
+                              <th>Action</th>
+                              <th>Affected record</th>
+                              <th>Details</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {auditLogs.map((entry) => (
+                              <tr key={entry.id}>
+                                <td>{new Date(entry.timestamp).toLocaleString()}</td>
+                                <td>{entry.actor
+                                  ? `${entry.actor.username} (${entry.actor.role})`
+                                  : 'Public / unknown'}</td>
+                                <td>{entry.action}</td>
+                                <td>{entry.affectedRecord
+                                  ? `${entry.affectedRecord.table} · ${entry.affectedRecord.id}`
+                                  : '—'}</td>
+                                <td><code>{JSON.stringify(entry.details)}</code></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {auditLogs.length === 0 && (
+                          <p className="admin-empty">No audit records have been recorded.</p>
+                        )}
+                      </div>
+                    </section>
+                  )}
                 </>
               )}
             </div>

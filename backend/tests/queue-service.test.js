@@ -25,6 +25,7 @@ class ScriptedDatabase {
   async runQuery(sql, values = []) {
     this.calls.push({ sql, values })
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return { rows: [] }
+    if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
     const response = this.responses.shift()
     assert.ok(response, `Unexpected query: ${sql}`)
     if (response.match) assert.match(sql, response.match)
@@ -66,6 +67,7 @@ class ConcurrentQueueDatabase {
           client.releaseQueueLock = null
           return { rows: [] }
         }
+        if (sql.includes('INSERT INTO audit_logs')) return { rows: [] }
         if (sql.includes('FROM staff') && sql.includes("role = 'cashier'")) {
           const staffId = values[0]
           return {
@@ -149,6 +151,7 @@ test('ticket issuance increments the Manila daily counter and stores only a toke
       }],
     },
     { match: /INSERT INTO queue_history/ },
+    { match: /ROW_NUMBER\(\) OVER[\s\S]*near_turn_offset/, rows: [] },
   ])
   const events = []
   const response = await issueTicket({
@@ -169,6 +172,10 @@ test('ticket issuance increments the Manila daily counter and stores only a toke
   assert.match(response.ticketAccessToken, /^[A-Za-z0-9_-]{43}$/)
   assert.equal(ticketInsert.values[3], expectedHash)
   assert.notEqual(ticketInsert.values[3], response.ticketAccessToken)
+  const issuanceAudit = database.calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.equal(issuanceAudit.values[3], 'queue.ticket.issued')
+  assert.equal(issuanceAudit.values[0], null)
+  assert.equal(JSON.stringify(issuanceAudit.values).includes(response.ticketAccessToken), false)
   assert.equal(events[0].event, 'ticket:issued')
   assert.equal('ticketAccessToken' in events[0].payload, false)
   assert.match(
@@ -178,12 +185,61 @@ test('ticket issuance increments the Manila daily counter and stores only a toke
   database.assertDone()
 })
 
+test('a newly issued ticket already inside the configured threshold gets one near-turn event', async () => {
+  const database = new ScriptedDatabase([
+    { match: /FROM transaction_types/, rows: [{ id: 'soa-type', name: 'SOA' }] },
+    { match: /Asia\/Manila/, rows: [{ business_date: '2026-11-13' }] },
+    { match: /ON CONFLICT \(business_date\)/, rows: [{ last_number: 1 }] },
+    {
+      match: /INSERT INTO queue_tickets/,
+      rows: [{
+        id: 'new-ticket',
+        business_date: '2026-11-13',
+        queue_number: 1,
+        issued_at: '2026-11-13T00:00:00.000Z',
+        status: 'waiting',
+      }],
+    },
+    { match: /INSERT INTO queue_history/ },
+    {
+      match: /ROW_NUMBER\(\) OVER[\s\S]*near_turn_offset/,
+      values: ['2026-11-13'],
+      rows: [{ id: 'new-ticket', queue_number: 1 }],
+    },
+    {
+      match: /INSERT INTO notifications[\s\S]*'near_turn'/,
+      values: ['new-ticket'],
+      rows: [{ id: 'new-near-turn' }],
+    },
+  ])
+  const events = []
+  const issued = await issueTicket({
+    database,
+    transactionType: 'SOA',
+    publicEvent: (event, payload) => events.push({ event, payload }),
+  })
+
+  assert.equal(issued.ticketNumber, '001')
+  assert.deepEqual(events.map(({ event }) => event), [
+    'ticket:issued',
+    'notification:created',
+  ])
+  assert.deepEqual(events[1].payload, {
+    ticketNumber: '001',
+    alertType: 'near_turn',
+  })
+  assert.equal('notifications' in issued, false)
+  database.assertDone()
+})
+
 test('ticket status requires its access token and hides the window until called', async () => {
   const ticketId = randomUUID()
   const accessToken = 'a'.repeat(43)
   let queryValues
+  let query
   const database = {
-    async query(_sql, values) {
+    async query(sql, values) {
+      query = sql
       queryValues = values
       return {
         rows: [{
@@ -196,6 +252,8 @@ test('ticket status requires its access token and hides the window until called'
           skipped_at: null,
           transaction_type: 'SOA',
           window_number: null,
+          queue_position: 1,
+          near_turn_offset: 5,
         }],
       }
     },
@@ -209,6 +267,11 @@ test('ticket status requires its access token and hides the window until called'
   )
   assert.equal('windowNumber' in response, false)
   assert.equal(response.ticketNumber, '001')
+  assert.equal(response.queuePosition, 1)
+  assert.equal(response.nearTurnOffset, 5)
+  assert.match(query, /waiting\.status = 'waiting'/)
+  assert.match(query, /waiting\.queue_number <= q\.queue_number/)
+  assert.match(query, /setting_key = 'near_turn_offset'/)
 })
 
 test('public waiting counts and window current tickets are scoped to the Manila business date', async () => {
@@ -292,7 +355,7 @@ test('cashier window response includes the business dates used to identify stale
   assert.equal(response.window.currentTicketBusinessDate, '2026-11-12')
 })
 
-test('call next locks and claims the oldest waiting ticket, then alerts N-5', async () => {
+test('call next alerts tickets within the configured waiting-position threshold', async () => {
   const auth = cashierAuth()
   const windowId = auth.assigned_window_id
   const ticketId = randomUUID()
@@ -317,10 +380,14 @@ test('call next locks and claims the oldest waiting ticket, then alerts N-5', as
     { match: /SET status = 'serving'/ },
     { match: /INSERT INTO queue_history/ },
     { match: /VALUES \(\$1, 'called'\)/, rows: [{ id: randomUUID() }] },
-    { match: /queue_number = \$2[\s\S]*FOR UPDATE/, rows: [{
-      id: targetTicketId,
-      queue_number: 10,
-    }] },
+    {
+      match: /ROW_NUMBER\(\) OVER[\s\S]*near_turn_offset/,
+      values: ['2026-11-13'],
+      rows: [{
+        id: targetTicketId,
+        queue_number: 10,
+      }],
+    },
     { match: /VALUES \(\$1, 'near_turn'\)/, rows: [{ id: randomUUID() }] },
   ])
   const events = []
@@ -340,6 +407,9 @@ test('call next locks and claims the oldest waiting ticket, then alerts N-5', as
   const nextQuery = database.calls.find(({ sql }) => sql.includes('FOR UPDATE OF q'))
   assert.match(nextQuery.sql, /LIMIT 1\s+FOR UPDATE OF q/)
   assert.doesNotMatch(nextQuery.sql, /SKIP LOCKED/)
+  const nearTurnQuery = database.calls.find(({ sql }) => sql.includes('ROW_NUMBER() OVER'))
+  assert.match(nearTurnQuery.sql, /near_turn_offset/)
+  assert.match(nearTurnQuery.sql, /queue_position <= settings\.near_turn_offset/)
   assert.deepEqual(events.map(({ event }) => event), [
     'ticket:called',
     'notification:created',
@@ -353,6 +423,9 @@ test('call next locks and claims the oldest waiting ticket, then alerts N-5', as
     events.some(({ payload }) => 'ticketAccessToken' in payload),
     false,
   )
+  const callAudit = database.calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.equal(callAudit.values[0], auth.staff_id)
+  assert.equal(callAudit.values[3], 'queue.ticket.called')
   database.assertDone()
 })
 
@@ -493,6 +566,8 @@ test('skipping completes only the assigned window current ticket and creates no 
 
   assert.equal(response.status, 'skipped')
   assert.equal(response.windowNumber, 4)
+  const audit = database.calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.equal(audit.values[3], 'queue.ticket.skipped')
   assert.deepEqual(events.map(({ event }) => event), ['ticket:skipped'])
   assert.equal(database.calls.some(({ sql }) => sql.includes('INSERT INTO notifications')), false)
   assert.equal(database.calls[4].values[0], ticketId)
@@ -525,6 +600,8 @@ test('completing a current ticket records completion and emits the public event'
 
   assert.equal(response.status, 'completed')
   assert.equal(events[0].event, 'ticket:completed')
+  const audit = database.calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.equal(audit.values[3], 'queue.ticket.completed')
   database.assertDone()
 })
 
@@ -555,5 +632,8 @@ test('window availability updates use the session-bound assigned window', async 
     event: 'window:updated',
     payload: { windowNumber: 2, status: 'available' },
   }])
+  const audit = database.calls.find(({ sql }) => sql.includes('INSERT INTO audit_logs'))
+  assert.equal(audit.values[0], auth.staff_id)
+  assert.equal(audit.values[3], 'window.availability.changed')
   database.assertDone()
 })

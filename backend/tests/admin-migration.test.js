@@ -10,6 +10,14 @@ const flexibleMigrationUrl = new URL(
   '../../database/migrations/003_flexible_cashier_window_assignments.sql',
   import.meta.url,
 )
+const systemAdminMigrationUrl = new URL(
+  '../../database/migrations/004_system_admin_audit_logs.sql',
+  import.meta.url,
+)
+const ticketPushMigrationUrl = new URL(
+  '../../database/migrations/005_ticket_push_notifications.sql',
+  import.meta.url,
+)
 
 test('active cashier assignment migration guards conflicts and preserves historical rows', async () => {
   const migration = await readFile(migrationUrl, 'utf8')
@@ -34,4 +42,38 @@ test('flexible assignment migration permits unassigned cashiers and preserves ac
   assert.match(migration, /GROUP BY assigned_window_id[\s\S]*HAVING COUNT\(\*\) > 1/)
   assert.doesNotMatch(migration, /^\s*(INSERT|UPDATE|DELETE)\s+/im)
   assert.doesNotMatch(migration, /\b(?:REFERENCES|queue_tickets|queue_history)\b/i)
+})
+
+test('System Admin migration is additive and makes audit records append-only', async () => {
+  const migration = await readFile(systemAdminMigrationUrl, 'utf8')
+
+  assert.match(migration, /role IN \('cashier', 'admin', 'system_admin'\)/)
+  assert.match(migration, /role IN \('admin', 'system_admin'\) AND assigned_window_id IS NULL/)
+  assert.match(migration, /CREATE TABLE public\.audit_logs/)
+  assert.match(migration, /actor_staff_id uuid/)
+  assert.match(migration, /action varchar\(100\) NOT NULL/)
+  assert.match(migration, /details jsonb NOT NULL/)
+  assert.match(migration, /created_at timestamptz NOT NULL DEFAULT now\(\)/)
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/)
+  assert.match(migration, /BEFORE UPDATE OR DELETE ON public\.audit_logs/)
+  assert.match(migration, /RAISE EXCEPTION 'Audit log records are append-only'/)
+  assert.doesNotMatch(migration, /^\s*(INSERT|UPDATE|DELETE)\s+/im)
+  assert.doesNotMatch(migration, /\b(?:queue_tickets|queue_history)\b/i)
+})
+
+test('ticket push migration scopes registrations and deactivates them on terminal states', async () => {
+  const migration = await readFile(ticketPushMigrationUrl, 'utf8')
+
+  assert.match(migration, /CREATE TABLE public\.ticket_push_subscriptions/)
+  assert.match(migration, /expo_push_token_ciphertext text NOT NULL/)
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/g)
+  assert.match(migration, /UNIQUE \(notification_id, subscription_id\)/)
+  assert.match(migration, /SECURITY DEFINER/)
+  assert.match(migration, /NEW\.status IN \('completed', 'skipped', 'expired'\)/)
+  assert.match(migration, /SET is_active = false/)
+  assert.match(migration, /delivery_status IN \('pending', 'sending'\)/)
+  assert.doesNotMatch(
+    migration.split('CREATE FUNCTION')[0],
+    /^\s*(INSERT|UPDATE|DELETE)\s+/im,
+  )
 })
