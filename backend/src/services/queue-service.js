@@ -1,7 +1,9 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { HttpError } from '../middleware/http-error.js'
 import { withTransaction } from '../db/transaction.js'
 import { writeAuditLog } from './audit-service.js'
+import { scheduleExpoPushNotification } from './push-notification-service.js'
+import { hashTicketAccessToken } from './ticket-token.js'
 
 const ticketTokenBytes = 32
 
@@ -9,12 +11,50 @@ function formatQueueNumber(number) {
   return String(number).padStart(3, '0')
 }
 
-function tokenHash(token) {
-  return createHash('sha256').update(token).digest('hex')
-}
-
 function emit(publicEvent, name, payload) {
   publicEvent?.(name, payload)
+}
+
+async function insertNearTurnNotifications(client, businessDate) {
+  const candidates = await client.query(
+    `WITH settings AS (
+       SELECT (setting_value #>> '{}')::integer AS near_turn_offset
+       FROM system_settings
+       WHERE setting_key = 'near_turn_offset'
+     ),
+     waiting_positions AS (
+       SELECT id, queue_number,
+              ROW_NUMBER() OVER (ORDER BY queue_number)::integer AS queue_position
+       FROM queue_tickets
+       WHERE business_date = $1 AND status = 'waiting'
+     )
+     SELECT waiting_positions.id, waiting_positions.queue_number
+     FROM waiting_positions
+     CROSS JOIN settings
+     WHERE waiting_positions.queue_position <= settings.near_turn_offset
+     ORDER BY waiting_positions.queue_position`,
+    [businessDate],
+  )
+
+  const notifications = []
+  for (const ticket of candidates.rows) {
+    const inserted = await client.query(
+      `INSERT INTO notifications (ticket_id, alert_type)
+       VALUES ($1, 'near_turn')
+       ON CONFLICT (ticket_id, alert_type) DO NOTHING
+       RETURNING id`,
+      [ticket.id],
+    )
+    if (inserted.rows.length > 0) {
+      notifications.push({
+        id: inserted.rows[0].id,
+        ticketId: ticket.id,
+        ticketNumber: formatQueueNumber(ticket.queue_number),
+        alertType: 'near_turn',
+      })
+    }
+  }
+  return notifications
 }
 
 async function lockCashierWindow(client, auth) {
@@ -69,7 +109,7 @@ export async function issueTicket({ database, transactionType, publicEvent }) {
          (business_date, queue_number, transaction_type_id, ticket_token_hash)
        VALUES ($1, $2, $3, $4)
        RETURNING id, business_date, queue_number, issued_at, status`,
-      [businessDate, queueNumber, type.id, tokenHash(accessToken)],
+      [businessDate, queueNumber, type.id, hashTicketAccessToken(accessToken)],
     )
     const ticket = ticketResult.rows[0]
 
@@ -91,7 +131,12 @@ export async function issueTicket({ database, transactionType, publicEvent }) {
       },
     })
 
-    return { ...ticket, transactionType: type.name }
+    const notifications = await insertNearTurnNotifications(
+      client,
+      ticket.business_date,
+    )
+
+    return { ...ticket, transactionType: type.name, notifications }
   })
 
   const response = {
@@ -109,6 +154,16 @@ export async function issueTicket({ database, transactionType, publicEvent }) {
     businessDate: response.businessDate,
     status: response.status,
   })
+  for (const notification of issued.notifications) {
+    emit(publicEvent, 'notification:created', {
+      ticketNumber: notification.ticketNumber,
+      alertType: notification.alertType,
+    })
+    scheduleExpoPushNotification({
+      database,
+      notificationId: notification.id,
+    })
+  }
 
   return response
 }
@@ -160,12 +215,24 @@ export async function getTicketStatus({ database, ticketId, accessToken }) {
     `SELECT q.business_date, q.queue_number, q.status, q.issued_at,
             q.called_at, q.completed_at, q.skipped_at,
             t.name AS transaction_type,
-            CASE WHEN q.window_id IS NOT NULL THEN w.window_number END AS window_number
+            CASE WHEN q.window_id IS NOT NULL THEN w.window_number END AS window_number,
+            CASE WHEN q.status = 'waiting' THEN (
+              SELECT COUNT(*)::integer
+              FROM queue_tickets waiting
+              WHERE waiting.business_date = q.business_date
+                AND waiting.status = 'waiting'
+                AND waiting.queue_number <= q.queue_number
+            ) END AS queue_position,
+            (
+              SELECT (setting_value #>> '{}')::integer
+              FROM system_settings
+              WHERE setting_key = 'near_turn_offset'
+            ) AS near_turn_offset
      FROM queue_tickets q
      JOIN transaction_types t ON t.id = q.transaction_type_id
      LEFT JOIN cashier_windows w ON w.id = q.window_id
      WHERE q.id = $1 AND q.ticket_token_hash = $2`,
-    [ticketId, tokenHash(accessToken)],
+    [ticketId, hashTicketAccessToken(accessToken)],
   )
   const ticket = result.rows[0]
   if (!ticket) throw new HttpError(404, 'Ticket not found')
@@ -179,6 +246,8 @@ export async function getTicketStatus({ database, ticketId, accessToken }) {
     calledAt: ticket.called_at,
     completedAt: ticket.completed_at,
     skippedAt: ticket.skipped_at,
+    queuePosition: ticket.queue_position,
+    nearTurnOffset: ticket.near_turn_offset,
     ...(ticket.window_number === null
       ? {}
       : { windowNumber: ticket.window_number }),
@@ -391,35 +460,18 @@ export async function callNext({ database, auth, publicEvent }) {
     )
     if (calledNotification.rows.length > 0) {
       notifications.push({
+        id: calledNotification.rows[0].id,
+        ticketId: ticket.id,
         ticketNumber: formatQueueNumber(ticket.queue_number),
         alertType: 'called',
+        windowNumber: window.window_number,
       })
     }
 
-    const nearTurnResult = await client.query(
-      `SELECT id, queue_number
-       FROM queue_tickets
-       WHERE business_date = $1 AND queue_number = $2
-         AND status = 'waiting'
-       FOR UPDATE`,
-      [ticket.business_date, ticket.queue_number + 5],
-    )
-    const nearTurnTicket = nearTurnResult.rows[0]
-    if (nearTurnTicket) {
-      const nearTurnNotification = await client.query(
-        `INSERT INTO notifications (ticket_id, alert_type)
-         VALUES ($1, 'near_turn')
-         ON CONFLICT (ticket_id, alert_type) DO NOTHING
-         RETURNING id`,
-        [nearTurnTicket.id],
-      )
-      if (nearTurnNotification.rows.length > 0) {
-        notifications.push({
-          ticketNumber: formatQueueNumber(nearTurnTicket.queue_number),
-          alertType: 'near_turn',
-        })
-      }
-    }
+    notifications.push(...await insertNearTurnNotifications(
+      client,
+      ticket.business_date,
+    ))
 
     return {
       ticketNumber: formatQueueNumber(ticket.queue_number),
@@ -438,7 +490,14 @@ export async function callNext({ database, auth, publicEvent }) {
     windowNumber: call.windowNumber,
   })
   for (const notification of call.notifications) {
-    emit(publicEvent, 'notification:created', notification)
+    emit(publicEvent, 'notification:created', {
+      ticketNumber: notification.ticketNumber,
+      alertType: notification.alertType,
+    })
+    scheduleExpoPushNotification({
+      database,
+      notificationId: notification.id,
+    })
   }
 
   return {

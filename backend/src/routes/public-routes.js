@@ -6,8 +6,10 @@ import {
   getTicketStatus,
   issueTicket,
 } from '../services/queue-service.js'
+import { registerTicketPushToken } from '../services/push-notification-service.js'
 import {
   issueTicketSchema,
+  ticketPushTokenSchema,
   ticketStatusSchema,
 } from '../validation/schemas.js'
 
@@ -21,6 +23,13 @@ const issuanceRateLimit = rateLimit({
       error: { status: 429, message: 'Too many ticket requests' },
     })
   },
+})
+
+const pushTokenRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
 })
 
 export function createPublicRoutes({ database }) {
@@ -55,6 +64,25 @@ export function createPublicRoutes({ database }) {
         database,
         ticketId: request.validated.params.ticketId,
         accessToken: request.validated.headers['x-ticket-token'],
+      })
+      response.status(200).json(result)
+    },
+  )
+
+  router.post(
+    '/tickets/:ticketId/push-token',
+    pushTokenRateLimit,
+    validateRequest({
+      params: ticketPushTokenSchema.shape.params,
+      headers: ticketPushTokenSchema.shape.headers,
+      body: ticketPushTokenSchema.shape.body,
+    }),
+    async (request, response) => {
+      const result = await registerTicketPushToken({
+        database,
+        ticketId: request.validated.params.ticketId,
+        accessToken: request.validated.headers['x-ticket-token'],
+        expoPushToken: request.validated.body.expoPushToken,
       })
       response.status(200).json(result)
     },

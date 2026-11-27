@@ -4,6 +4,7 @@ import { createApp } from './app.js'
 import { config } from './config/env.js'
 import { pool } from './db/pool.js'
 import { createSocketServer } from './sockets/create-socket-server.js'
+import { startExpoPushWorker } from './services/push-notification-service.js'
 
 export function createBackendServer() {
   const app = createApp()
@@ -16,6 +17,9 @@ export function createBackendServer() {
 
 export async function startServer() {
   const { httpServer, io } = createBackendServer()
+  const stopPushWorker = config.databaseUrl && config.expoPushTokenEncryptionKey
+    ? startExpoPushWorker(pool)
+    : () => {}
 
   httpServer.on('error', (error) => {
     console.error('Backend server failed to start', error.code ?? 'unknown')
@@ -31,6 +35,7 @@ export async function startServer() {
     if (shuttingDown) return
     shuttingDown = true
     console.log(`${signal} received; shutting down backend`)
+    stopPushWorker()
 
     io.close(() => {
       httpServer.close(async () => {

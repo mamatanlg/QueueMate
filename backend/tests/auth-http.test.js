@@ -148,7 +148,7 @@ class AuthHttpDatabase {
         if (sql.includes("VALUES ($1, 'called')")) {
           return { rows: [{ id: 'notification-1' }] }
         }
-        if (sql.includes('WHERE business_date = $1 AND queue_number = $2')) {
+        if (sql.includes('ROW_NUMBER() OVER')) {
           return { rows: [] }
         }
 

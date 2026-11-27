@@ -54,6 +54,21 @@ This starts Vite only. Vite normally reports `Local: http://localhost:5173/`; op
 
 For a separately hosted production frontend, set the build-time variable `VITE_API_BASE_URL` to the backend API base URL ending in `/api/v1`. Set `CLIENT_ORIGINS` on the backend to the frontend's exact browser origin.
 
+### Expo mobile app
+
+The mobile app calls the same backend directly. Copy `mobile-app/.env.example` to `mobile-app/.env` and set `EXPO_PUBLIC_API_BASE_URL` to the backend API URL ending in `/api/v1`. When running on a physical phone against a computer-hosted backend, use the computer's LAN IPv4 address, for example `http://192.168.1.25:4000/api/v1`—never `localhost`. Keep the phone and computer on the same network, allow inbound port `4000` through the computer firewall, and restart Expo after changing `.env`:
+
+```powershell
+Copy-Item mobile-app\.env.example mobile-app\.env
+# Edit mobile-app\.env and replace the example IP with the computer's LAN IP
+Set-Location mobile-app
+npm start
+```
+
+The mobile app uses the public `POST /api/v1/public/tickets`, `GET /api/v1/public/tickets/:ticketId`, and `GET /api/v1/public/queue` routes. Ticket credentials are stored in the platform's secure storage so a notification tap can restore that ticket; no backend credentials or secrets are included in the app.
+
+Remote push alerts additionally require the backend migration `005_ticket_push_notifications.sql`, a backend-only `EXPO_PUSH_TOKEN_ENCRYPTION_KEY`, and Android FCM credentials configured for an EAS project. Set the non-secret `EXPO_PUBLIC_EAS_PROJECT_ID` in `mobile-app/.env` when available. Build and install a custom development/production app to test remote push; Android Expo Go does not support remote push. The app will continue live in-app monitoring and show an explicit notice if background push cannot be configured.
+
 ## Backend deployment configuration
 
 `render.yaml` configures the authenticated backend from the `backend/` directory. Render requires `DATABASE_URL`, `SESSION_SECRET`, and `CLIENT_ORIGINS`; `NODE_ENV` is set to production and Render supplies `PORT`. The health check uses the existing `/api/v1/health/database` route, which returns success only when the database connection check succeeds.
@@ -67,7 +82,7 @@ This Render service deploys the backend only; it does not deploy the Vite fronte
 - Keep the cashier assignments fixed: Cashier 1 → Window 1, Cashier 2 → Window 2, Cashier 3 → Window 3, and Cashier 4 → Window 4. Each cashier can operate only their assigned window.
 - When a cashier calls next, the backend assigns the oldest waiting number to that cashier's window. The operation must be atomic so two cashiers cannot call the same number or skip an older waiting number.
 - An unavailable window cannot receive a new assignment. When it becomes available, its cashier may call the next waiting number.
-- For ticket 010, calling 005 triggers the approaching alert; calling 010 triggers the called alert with the assigned window. Trigger each alert once per ticket, using sound and vibration when supported and permitted.
+- Create approaching alerts when a ticket enters the configured near-turn waiting-position threshold, including when a new ticket is already within that threshold. Calling a ticket triggers its called alert with the assigned window. Trigger each alert once per ticket, using sound and vibration when supported and permitted.
 - Students and parents do not need accounts. Cashier and administrator functions require authentication.
 - On mobile, show the customer's number and status plus all four current serving numbers. Do not show an assigned window until that customer's ticket has been called.
 
@@ -98,10 +113,8 @@ QueueMate/
 2. **Queue API and real-time events:** Implement backend endpoints and Socket.IO updates; verify concurrent calls, oldest-first behavior, unavailable windows, and once-per-ticket alerts.
 3. **Cashier web:** Build authenticated cashier sign-in and assigned-window queue controls against the shared backend.
 4. **Public display:** Build the TV view for all four windows, latest issued number, statuses, and public QR code.
-5. **Mobile app:** Build QR scanning, transaction selection, ticket tracking, and permitted sound/vibration alerts.
+5. **Mobile app:** Maintain the Expo client integration for QR entry, ticket creation, live tracking, and queue alerts.
 6. **Integration and deployment:** Test all clients against the same backend/database, validate LAN development access, then configure the public HTTPS deployment.
-
-Do not install packages or initialize these applications until the setup plan is approved. No new application code has been added as part of this structure preparation.
 
 ## Legacy application reference
 

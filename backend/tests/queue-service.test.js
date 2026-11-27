@@ -151,6 +151,7 @@ test('ticket issuance increments the Manila daily counter and stores only a toke
       }],
     },
     { match: /INSERT INTO queue_history/ },
+    { match: /ROW_NUMBER\(\) OVER[\s\S]*near_turn_offset/, rows: [] },
   ])
   const events = []
   const response = await issueTicket({
@@ -184,12 +185,61 @@ test('ticket issuance increments the Manila daily counter and stores only a toke
   database.assertDone()
 })
 
+test('a newly issued ticket already inside the configured threshold gets one near-turn event', async () => {
+  const database = new ScriptedDatabase([
+    { match: /FROM transaction_types/, rows: [{ id: 'soa-type', name: 'SOA' }] },
+    { match: /Asia\/Manila/, rows: [{ business_date: '2026-11-13' }] },
+    { match: /ON CONFLICT \(business_date\)/, rows: [{ last_number: 1 }] },
+    {
+      match: /INSERT INTO queue_tickets/,
+      rows: [{
+        id: 'new-ticket',
+        business_date: '2026-11-13',
+        queue_number: 1,
+        issued_at: '2026-11-13T00:00:00.000Z',
+        status: 'waiting',
+      }],
+    },
+    { match: /INSERT INTO queue_history/ },
+    {
+      match: /ROW_NUMBER\(\) OVER[\s\S]*near_turn_offset/,
+      values: ['2026-11-13'],
+      rows: [{ id: 'new-ticket', queue_number: 1 }],
+    },
+    {
+      match: /INSERT INTO notifications[\s\S]*'near_turn'/,
+      values: ['new-ticket'],
+      rows: [{ id: 'new-near-turn' }],
+    },
+  ])
+  const events = []
+  const issued = await issueTicket({
+    database,
+    transactionType: 'SOA',
+    publicEvent: (event, payload) => events.push({ event, payload }),
+  })
+
+  assert.equal(issued.ticketNumber, '001')
+  assert.deepEqual(events.map(({ event }) => event), [
+    'ticket:issued',
+    'notification:created',
+  ])
+  assert.deepEqual(events[1].payload, {
+    ticketNumber: '001',
+    alertType: 'near_turn',
+  })
+  assert.equal('notifications' in issued, false)
+  database.assertDone()
+})
+
 test('ticket status requires its access token and hides the window until called', async () => {
   const ticketId = randomUUID()
   const accessToken = 'a'.repeat(43)
   let queryValues
+  let query
   const database = {
-    async query(_sql, values) {
+    async query(sql, values) {
+      query = sql
       queryValues = values
       return {
         rows: [{
@@ -202,6 +252,8 @@ test('ticket status requires its access token and hides the window until called'
           skipped_at: null,
           transaction_type: 'SOA',
           window_number: null,
+          queue_position: 1,
+          near_turn_offset: 5,
         }],
       }
     },
@@ -215,6 +267,11 @@ test('ticket status requires its access token and hides the window until called'
   )
   assert.equal('windowNumber' in response, false)
   assert.equal(response.ticketNumber, '001')
+  assert.equal(response.queuePosition, 1)
+  assert.equal(response.nearTurnOffset, 5)
+  assert.match(query, /waiting\.status = 'waiting'/)
+  assert.match(query, /waiting\.queue_number <= q\.queue_number/)
+  assert.match(query, /setting_key = 'near_turn_offset'/)
 })
 
 test('public waiting counts and window current tickets are scoped to the Manila business date', async () => {
@@ -298,7 +355,7 @@ test('cashier window response includes the business dates used to identify stale
   assert.equal(response.window.currentTicketBusinessDate, '2026-11-12')
 })
 
-test('call next locks and claims the oldest waiting ticket, then alerts N-5', async () => {
+test('call next alerts tickets within the configured waiting-position threshold', async () => {
   const auth = cashierAuth()
   const windowId = auth.assigned_window_id
   const ticketId = randomUUID()
@@ -323,10 +380,14 @@ test('call next locks and claims the oldest waiting ticket, then alerts N-5', as
     { match: /SET status = 'serving'/ },
     { match: /INSERT INTO queue_history/ },
     { match: /VALUES \(\$1, 'called'\)/, rows: [{ id: randomUUID() }] },
-    { match: /queue_number = \$2[\s\S]*FOR UPDATE/, rows: [{
-      id: targetTicketId,
-      queue_number: 10,
-    }] },
+    {
+      match: /ROW_NUMBER\(\) OVER[\s\S]*near_turn_offset/,
+      values: ['2026-11-13'],
+      rows: [{
+        id: targetTicketId,
+        queue_number: 10,
+      }],
+    },
     { match: /VALUES \(\$1, 'near_turn'\)/, rows: [{ id: randomUUID() }] },
   ])
   const events = []
@@ -346,6 +407,9 @@ test('call next locks and claims the oldest waiting ticket, then alerts N-5', as
   const nextQuery = database.calls.find(({ sql }) => sql.includes('FOR UPDATE OF q'))
   assert.match(nextQuery.sql, /LIMIT 1\s+FOR UPDATE OF q/)
   assert.doesNotMatch(nextQuery.sql, /SKIP LOCKED/)
+  const nearTurnQuery = database.calls.find(({ sql }) => sql.includes('ROW_NUMBER() OVER'))
+  assert.match(nearTurnQuery.sql, /near_turn_offset/)
+  assert.match(nearTurnQuery.sql, /queue_position <= settings\.near_turn_offset/)
   assert.deepEqual(events.map(({ event }) => event), [
     'ticket:called',
     'notification:created',

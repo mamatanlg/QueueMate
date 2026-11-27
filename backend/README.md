@@ -34,7 +34,8 @@ For a fresh database, apply these migrations in order from the repository root:
 3. [`database/migrations/002_active_cashier_window_assignments.sql`](../database/migrations/002_active_cashier_window_assignments.sql) replaces unconditional cashier window uniqueness with uniqueness for active assignments only. It stops if active assignment conflicts exist and does not change staff or queue records.
 4. [`database/migrations/003_flexible_cashier_window_assignments.sql`](../database/migrations/003_flexible_cashier_window_assignments.sql) permits cashier accounts without a window while preserving active-cashier-per-window uniqueness and independent, unassigned admin accounts. It stops if active assignment conflicts exist and does not modify staff or queue records.
 5. [`database/migrations/004_system_admin_audit_logs.sql`](../database/migrations/004_system_admin_audit_logs.sql) adds the separately provisioned `system_admin` role and append-only `audit_logs` table. It preserves all existing roles and records.
-6. Run the cashier seed script below to create any missing cashier accounts.
+6. [`database/migrations/005_ticket_push_notifications.sql`](../database/migrations/005_ticket_push_notifications.sql) adds private ticket-scoped Expo push registrations and delivery receipts, plus terminal-ticket cleanup. It does not change queue records or rules.
+7. Run the cashier seed script below to create any missing cashier accounts.
 
 The operational baseline is for a fresh database only. Do not replay it against an existing populated QueueMate database: it creates tables and inserts reference records. Check an existing installation against the baseline definitions and reconcile differences separately; do not recreate its tables or records. Apply the auth-session migration to an existing database only after verifying that its objects are not already present.
 
@@ -114,7 +115,7 @@ Only one account per administrator role can be provisioned by these commands. Th
 
 ## API
 
-All responses use JSON except logout (`204 No Content`). Protected routes require `Authorization: Bearer <accessToken>`. Login tokens expire after eight hours and are checked against the session table on every authenticated request; logout revokes the current token. Ticket access tokens are returned only when issuing a ticket and must be sent in the `X-Ticket-Token` header when looking up that ticket. Store them securely; they cannot be recovered from the database.
+All responses use JSON except logout (`204 No Content`). Protected routes require `Authorization: Bearer <accessToken>`. Login tokens expire after eight hours and are checked against the session table on every authenticated request; logout revokes the current token. Ticket access tokens are returned only when issuing a ticket and must be sent in the `X-Ticket-Token` header when looking up that ticket or registering a device's push token. Store them securely; they cannot be recovered from the database.
 
 ### Authentication
 
@@ -150,6 +151,7 @@ Cashier login returns `"window": null` for a cashier who has not selected a wind
 - `GET /api/v1/public/queue` — business date, latest daily number, waiting count, and active window statuses/current numbers.
 - `POST /api/v1/public/tickets` — issues a ticket; limited to 10 requests per IP per minute.
 - `GET /api/v1/public/tickets/{ticketId}` — fetches ticket status using its ticket access token header.
+- `POST /api/v1/public/tickets/{ticketId}/push-token` — registers an Expo push token for that active ticket using its ticket access token; limited to 10 requests per IP per minute.
 
 Issue request:
 
@@ -158,6 +160,10 @@ Issue request:
 ```
 
 Supported `transactionType` values are `SOA`, `Payment`, and `Other Transactions`.
+
+The push-token registration body is `{"expoPushToken":"ExponentPushToken[...]"}`. It returns only `{"registered":true}`. The backend creates near-turn notifications using the configured `near_turn_offset` against live waiting positions, including a newly issued ticket already inside that threshold. Called alerts are sent only while a ticket is being served. Expo receipts are processed asynchronously, and registrations are deactivated when their ticket is completed, skipped, or expired.
+
+Remote push is optional and requires migration 005. Set `EXPO_PUSH_TOKEN_ENCRYPTION_KEY` in the backend environment to a base64-encoded random 32-byte key (generate one locally with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64'))"`). The optional `EXPO_PUSH_ACCESS_TOKEN` is also backend-only. Never put either value in the mobile app or source control. For Android push testing, configure an EAS project and FCM credentials, then install a custom development or production build; Android Expo Go does not support remote push notifications.
 
 Sanitized issue response:
 
@@ -188,7 +194,7 @@ All routes require an authenticated cashier. Queue operations use the cashier's 
 - `POST /api/v1/cashier/current/complete` — completes the current ticket.
 - `POST /api/v1/cashier/current/skip` — skips the current ticket.
 
-Cashier selection only accepts active, available, unoccupied windows. Assignment changes and queue operations lock the cashier row; switching or release returns `409` while a ticket is serving. Queue claims use a PostgreSQL transaction and row lock without `SKIP LOCKED`, so a locked older ticket is not bypassed. Daily numbers are generated atomically using the Manila business date. Near-turn notifications are created only when the N-5 ticket is called, not when it is skipped.
+Cashier selection only accepts active, available, unoccupied windows. Assignment changes and queue operations lock the cashier row; switching or release returns `409` while a ticket is serving. Queue claims use a PostgreSQL transaction and row lock without `SKIP LOCKED`, so a locked older ticket is not bypassed. Daily numbers are generated atomically using the Manila business date. Near-turn notifications are based on actual waiting positions and the configured `near_turn_offset`, not arithmetic on queue numbers.
 
 ### Admin cashier and window management
 

@@ -23,6 +23,16 @@ export const ticketStatusSchema = z.object({
   }),
 })
 
+export const ticketPushTokenSchema = z.object({
+  params: ticketStatusSchema.shape.params,
+  headers: ticketStatusSchema.shape.headers,
+  body: z.object({
+    expoPushToken: z.string()
+      .max(200)
+      .regex(/^(?:Exponent|Expo)PushToken\[[A-Za-z0-9_-]+\]$/),
+  }).strict(),
+})
+
 export const windowAvailabilitySchema = z.object({
   body: z.object({
     availabilityStatus: z.enum(['available', 'unavailable']),

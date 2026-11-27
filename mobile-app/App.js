@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import {
+  AppState,
+  Platform,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -11,17 +13,61 @@ import {
   View,
 } from 'react-native'
 import { CameraView, useCameraPermissions } from 'expo-camera'
+import { useAudioPlayer, setAudioModeAsync } from 'expo-audio'
+import Constants from 'expo-constants'
+import * as Haptics from 'expo-haptics'
+import * as Notifications from 'expo-notifications'
+import * as SecureStore from 'expo-secure-store'
+import { io } from 'socket.io-client'
+import nearTurnSound from './assets/near-turn.wav'
+import calledSound from './assets/called.wav'
 import {
   QUEUE_ENTRY_QR_PAYLOAD,
   parseQueueEntryQr,
 } from './queue-entry-qr.mjs'
+import { apiRequest, getApiOrigin } from './api.mjs'
+import {
+  claimAlertOnce,
+  getTicketView,
+  hasReachedNearTurn,
+  isCalledTransition,
+  parseTicketAlertEvent,
+  triggerAlertOnce,
+} from './queue-alerts.mjs'
+import {
+  createInitialQueueFlow,
+  getTerminalTicketPresentation,
+  queueFlowReducer,
+  shouldMonitorTicket,
+  stopQueueMonitoring,
+} from './queue-flow.mjs'
 
-const DEMO_WINDOWS = [
-  { id: 1, servingNumber: '252', status: 'SERVING' },
-  { id: 2, servingNumber: '248', status: 'SERVING' },
-  { id: 3, servingNumber: '250', status: 'SERVING' },
-  { id: 4, servingNumber: null, status: 'AVAILABLE' },
+const activeTicketStorageKey = 'queuemate.active-ticket'
+const notificationChannels = [
+  {
+    id: 'queuemate-near-turn-v1',
+    name: 'QueueMate - Turn approaching',
+    sound: 'near-turn.wav',
+    vibrationPattern: [0, 320, 140, 320],
+  },
+  {
+    id: 'queuemate-called-v1',
+    name: 'QueueMate - Ticket called',
+    sound: 'called.wav',
+    vibrationPattern: [0, 500, 140, 500, 140, 700],
+  },
 ]
+
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldPlaySound: false,
+      shouldSetBadge: false,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  })
+}
 
 const colors = {
   blue: '#173CCB',
@@ -34,67 +80,473 @@ const colors = {
 
 export default function App() {
   const [permission, requestPermission] = useCameraPermissions()
+  const [flow, dispatchFlow] = useReducer(
+    queueFlowReducer,
+    undefined,
+    createInitialQueueFlow,
+  )
   const [scanning, setScanning] = useState(false)
   const [manualEntry, setManualEntry] = useState(false)
   const [manualCode, setManualCode] = useState('')
-  const [message, setMessage] = useState('')
-  const [accessGranted, setAccessGranted] = useState(false)
-  const [confirmedCode, setConfirmedCode] = useState('')
-  const [selectedTransaction, setSelectedTransaction] = useState('')
-  const [transactionSelection, setTransactionSelection] = useState(false)
-  const [demoTicket, setDemoTicket] = useState(null)
-  const [ticketScreen, setTicketScreen] = useState(false)
-  const [monitoringScreen, setMonitoringScreen] = useState(false)
-  const [demoWindows, setDemoWindows] = useState(DEMO_WINDOWS)
-  const [queueRefreshed, setQueueRefreshed] = useState(false)
+  const [notificationMessage, setNotificationMessage] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
   const scanHandled = useRef(false)
-  const ticketCreated = useRef(false)
-  const alertedNearTurnEvent = useRef(null)
-
-  const transactionNames = {
-    soa: 'Statement of Account (SOA)',
-    payment: 'Payment',
-  }
-  const assignedWindow = demoTicket?.assignedWindowId
-    ? demoWindows.find((window) => window.id === demoTicket.assignedWindowId)
-    : null
-  const ticketNumber = Number(demoTicket?.number)
-  const servingNumber = Number(assignedWindow?.servingNumber)
-  const isExactlyFiveAhead =
-    assignedWindow &&
-    assignedWindow.status === 'SERVING' &&
-    Number.isFinite(ticketNumber) &&
-    Number.isFinite(servingNumber) &&
-    ticketNumber - servingNumber === 5
-  const alertTicketNumber = isExactlyFiveAhead ? demoTicket.number : null
-  const alertWindowId = isExactlyFiveAhead ? assignedWindow.id : null
-  const nearTurnAlertEvent =
-    alertTicketNumber !== null && alertWindowId !== null
-      ? { ticketNumber: alertTicketNumber, windowId: alertWindowId }
-      : null
+  const issueRequestInFlight = useRef(false)
+  const ticketFlowGeneration = useRef(0)
+  const activeTicketId = useRef(null)
+  const lastTicketStatus = useRef(new Map())
+  const alertedEvents = useRef(new Set())
+  const expoPushToken = useRef(null)
+  const pushTokenRequest = useRef(null)
+  const ticketStorageQueue = useRef(Promise.resolve())
+  const restoringTicketIds = useRef(new Set())
+  const nearTurnPlayer = useAudioPlayer(nearTurnSound)
+  const calledPlayer = useAudioPlayer(calledSound)
+  const ticket = flow.ticket
+  const queue = flow.queue
+  const ticketView = getTicketView(ticket?.status)
+  const terminalTicket = getTerminalTicketPresentation(ticket)
+  const nearTurnAlert = hasReachedNearTurn(ticket)
 
   useEffect(() => {
-    if (alertTicketNumber === null || alertWindowId === null) return
-    const eventKey = `${alertTicketNumber}:${alertWindowId}`
-    if (alertedNearTurnEvent.current !== eventKey) {
-      alertedNearTurnEvent.current = eventKey
-      Vibration.vibrate([0, 400, 200, 400])
+    void setAudioModeAsync({
+      playsInSilentMode: true,
+      interruptionMode: 'duckOthers',
+    }).catch((error) => {
+      console.warn('QueueMate alert audio is unavailable.', error)
+    })
+  }, [])
+
+  const getExpoPushToken = useCallback(async () => {
+    if (Platform.OS === 'web') return null
+    if (expoPushToken.current) return expoPushToken.current
+
+    if (!pushTokenRequest.current) {
+      pushTokenRequest.current = (async () => {
+        if (Platform.OS === 'android') {
+          await Promise.all(notificationChannels.map((channel) => (
+            Notifications.setNotificationChannelAsync(channel.id, {
+              name: channel.name,
+              importance: Notifications.AndroidImportance.MAX,
+              sound: channel.sound,
+              vibrationPattern: channel.vibrationPattern,
+              enableVibrate: true,
+              showBadge: true,
+            })
+          )))
+        }
+
+        const current = await Notifications.getPermissionsAsync()
+        const permission = current.granted
+          ? current
+          : await Notifications.requestPermissionsAsync()
+        if (!permission.granted) {
+          setNotificationMessage(
+            'Push notifications are disabled. Keep QueueMate open to receive queue alerts.',
+          )
+          return null
+        }
+
+        const projectId = Constants.expoConfig?.extra?.eas?.projectId
+          ?? Constants.easConfig?.projectId
+        if (!projectId) {
+          throw new Error(
+            'Expo project ID is missing. Configure EXPO_PUBLIC_EAS_PROJECT_ID to enable background alerts.',
+          )
+        }
+
+        const tokenResult = await Notifications.getExpoPushTokenAsync({ projectId })
+        expoPushToken.current = tokenResult.data
+        return tokenResult.data
+      })()
     }
-  }, [alertTicketNumber, alertWindowId])
+
+    try {
+      return await pushTokenRequest.current
+    } finally {
+      pushTokenRequest.current = null
+    }
+  }, [])
+
+  const persistActiveTicket = useCallback((ticket) => {
+    const operation = ticketStorageQueue.current
+      .catch((error) => {
+        console.warn('A previous QueueMate ticket could not be stored.', error)
+      })
+      .then(() => SecureStore.setItemAsync(
+        activeTicketStorageKey,
+        JSON.stringify({
+          ticketId: ticket.ticketId,
+          ticketAccessToken: ticket.ticketAccessToken,
+        }),
+      ))
+    ticketStorageQueue.current = operation
+    return operation
+  }, [])
+
+  const clearStoredTicket = useCallback((ticketId) => {
+    const operation = ticketStorageQueue.current
+      .catch((error) => {
+        console.warn('A previous QueueMate ticket could not be stored.', error)
+      })
+      .then(async () => {
+        const storedTicket = await SecureStore.getItemAsync(activeTicketStorageKey)
+        if (!storedTicket) return
+        let parsedTicket
+        try {
+          parsedTicket = JSON.parse(storedTicket)
+        } catch {
+          await SecureStore.deleteItemAsync(activeTicketStorageKey)
+          throw new Error('Stored ticket credentials were invalid and removed.')
+        }
+        if (parsedTicket.ticketId === ticketId) {
+          await SecureStore.deleteItemAsync(activeTicketStorageKey)
+        }
+      })
+    ticketStorageQueue.current = operation
+    return operation
+  }, [])
+
+  const registerPushTokenForTicket = useCallback(async (ticketToRegister) => {
+    try {
+      const token = await getExpoPushToken()
+      if (!token || activeTicketId.current !== ticketToRegister.ticketId) return
+      await apiRequest(`/public/tickets/${ticketToRegister.ticketId}/push-token`, {
+        method: 'POST',
+        ticketToken: ticketToRegister.ticketAccessToken,
+        body: { expoPushToken: token },
+      })
+      if (activeTicketId.current === ticketToRegister.ticketId) {
+        setNotificationMessage('')
+      }
+    } catch (error) {
+      console.warn('QueueMate background push registration failed.', error)
+      if (activeTicketId.current === ticketToRegister.ticketId) {
+        setNotificationMessage(
+          'Background notifications could not be enabled. Keep QueueMate open to receive queue alerts.',
+        )
+      }
+    }
+  }, [getExpoPushToken])
+
+  const triggerTicketAlert = useCallback((ticketId, eventType) => {
+    return triggerAlertOnce(
+      alertedEvents.current,
+      ticketId,
+      eventType,
+      {
+        playSound() {
+          const player = eventType === 'called' ? calledPlayer : nearTurnPlayer
+          player.pause()
+          void player.seekTo(0)
+            .then(() => {
+              if (activeTicketId.current === ticketId) player.play()
+            })
+            .catch((error) => {
+              console.warn('QueueMate alert sound could not be played.', error)
+            })
+        },
+        vibrate() {
+          if (Platform.OS === 'android') {
+            const channel = notificationChannels.find((item) => (
+              item.id === (
+                eventType === 'called'
+                  ? 'queuemate-called-v1'
+                  : 'queuemate-near-turn-v1'
+              )
+            ))
+            try {
+              Vibration.vibrate(channel.vibrationPattern)
+            } catch (error) {
+              console.warn('QueueMate vibration alert is unavailable.', error)
+            }
+            return
+          }
+
+          const hapticType = eventType === 'called'
+            ? Haptics.NotificationFeedbackType.Success
+            : Haptics.NotificationFeedbackType.Warning
+          void Haptics.notificationAsync(hapticType).catch((error) => {
+            console.warn('QueueMate haptic alert is unavailable.', error)
+          })
+        },
+      },
+    )
+  }, [calledPlayer, nearTurnPlayer])
+
+  const restoreTicketFromNotification = useCallback(async (ticketId) => {
+    if (activeTicketId.current && activeTicketId.current !== ticketId) return
+    if (Platform.OS === 'web') return
+    if (restoringTicketIds.current.has(ticketId)) return
+
+    const restoreGeneration = ticketFlowGeneration.current
+    restoringTicketIds.current.add(ticketId)
+    try {
+      await ticketStorageQueue.current
+      if (restoreGeneration !== ticketFlowGeneration.current) return
+      const storedTicket = await SecureStore.getItemAsync(activeTicketStorageKey)
+      if (!storedTicket) return
+
+      let credentials
+      try {
+        credentials = JSON.parse(storedTicket)
+      } catch {
+        await SecureStore.deleteItemAsync(activeTicketStorageKey)
+        throw new Error('Stored ticket credentials are invalid.')
+      }
+
+      if (
+        credentials.ticketId !== ticketId
+        || typeof credentials.ticketAccessToken !== 'string'
+        || !credentials.ticketAccessToken
+      ) {
+        return
+      }
+
+      const ticketStatus = await apiRequest(`/public/tickets/${ticketId}`, {
+        ticketToken: credentials.ticketAccessToken,
+      })
+      if (
+        restoreGeneration !== ticketFlowGeneration.current
+        || (activeTicketId.current && activeTicketId.current !== ticketId)
+      ) {
+        return
+      }
+
+      const restoredTicket = {
+        ...ticketStatus,
+        ticketId,
+        ticketAccessToken: credentials.ticketAccessToken,
+      }
+      activeTicketId.current = ticketId
+      lastTicketStatus.current.clear()
+      lastTicketStatus.current.set(ticketId, restoredTicket.status)
+      dispatchFlow({ type: 'ticket-restored', ticket: restoredTicket })
+      setRefreshKey((key) => key + 1)
+      void registerPushTokenForTicket(restoredTicket)
+    } finally {
+      restoringTicketIds.current.delete(ticketId)
+    }
+  }, [registerPushTokenForTicket])
+
+  const handleNotificationResponse = useCallback((response) => {
+    const alertEvent = parseTicketAlertEvent(
+      response.notification.request.content.data,
+    )
+    if (!alertEvent) return
+    const { ticketId, eventType } = alertEvent
+
+    claimAlertOnce(alertedEvents.current, ticketId, eventType)
+    if (activeTicketId.current === ticketId) {
+      dispatchFlow({ type: 'open-ticket' })
+      setRefreshKey((key) => key + 1)
+      return
+    }
+    if (activeTicketId.current) return
+
+    void restoreTicketFromNotification(ticketId).catch((error) => {
+      console.warn('QueueMate could not restore the ticket from this alert.', error)
+      setNotificationMessage(
+        'This queue alert could not be opened. Scan the TV QR code to start again.',
+      )
+    })
+  }, [restoreTicketFromNotification])
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined
+
+    const receivedSubscription = Notifications.addNotificationReceivedListener(
+      (notification) => {
+        const alertEvent = parseTicketAlertEvent(
+          notification.request.content.data,
+        )
+        if (!alertEvent || activeTicketId.current !== alertEvent.ticketId) {
+          return
+        }
+
+        triggerTicketAlert(alertEvent.ticketId, alertEvent.eventType)
+        setRefreshKey((key) => key + 1)
+      },
+    )
+    const responseSubscription = Notifications.addNotificationResponseReceivedListener(
+      handleNotificationResponse,
+    )
+    const lastResponse = Notifications.getLastNotificationResponse()
+    if (lastResponse) handleNotificationResponse(lastResponse)
+
+    return () => {
+      receivedSubscription.remove()
+      responseSubscription.remove()
+    }
+  }, [handleNotificationResponse, triggerTicketAlert])
+
+  useEffect(() => {
+    if (!nearTurnAlert || !ticket?.ticketId) return
+    triggerTicketAlert(ticket.ticketId, 'near-turn')
+  }, [
+    nearTurnAlert,
+    ticket?.ticketId,
+    ticket?.queuePosition,
+    triggerTicketAlert,
+  ])
+
+  useEffect(() => {
+    if (!shouldMonitorTicket(ticket, flow.screen)) return undefined
+
+    let active = true
+    let requestInFlight = false
+    let refreshRequested = false
+
+    async function refreshLiveData() {
+      if (!active || activeTicketId.current !== ticket.ticketId) return
+      if (requestInFlight) {
+        refreshRequested = true
+        return
+      }
+      requestInFlight = true
+
+      do {
+        refreshRequested = false
+        const [ticketResult, queueResult] = await Promise.allSettled([
+          apiRequest(`/public/tickets/${ticket.ticketId}`, {
+            ticketToken: ticket.ticketAccessToken,
+          }),
+          apiRequest('/public/queue'),
+        ])
+
+        if (!active || activeTicketId.current !== ticket.ticketId) break
+
+        if (ticketResult.status === 'fulfilled') {
+          const updatedTicket = ticketResult.value
+          const previousStatus = lastTicketStatus.current.get(ticket.ticketId)
+            ?? ticket.status
+          if (isCalledTransition(previousStatus, updatedTicket.status)) {
+            triggerTicketAlert(ticket.ticketId, 'called')
+          }
+          lastTicketStatus.current.set(ticket.ticketId, updatedTicket.status)
+          dispatchFlow({
+            type: 'ticket-updated',
+            ticketId: ticket.ticketId,
+            ticket: updatedTicket,
+          })
+        } else {
+          dispatchFlow({
+            type: 'tracking-error',
+            ticketId: ticket.ticketId,
+            source: 'ticket',
+            message: ticketResult.reason instanceof Error
+              ? ticketResult.reason.message
+              : 'Unable to refresh your ticket status.',
+          })
+        }
+
+        if (queueResult.status === 'fulfilled') {
+          dispatchFlow({
+            type: 'queue-updated',
+            ticketId: ticket.ticketId,
+            queue: queueResult.value,
+          })
+        } else {
+          dispatchFlow({
+            type: 'tracking-error',
+            ticketId: ticket.ticketId,
+            source: 'queue',
+            message: queueResult.reason instanceof Error
+              ? queueResult.reason.message
+              : 'Unable to refresh the public queue.',
+          })
+        }
+      } while (active && refreshRequested)
+      requestInFlight = false
+    }
+
+    void refreshLiveData()
+    const interval = setInterval(() => {
+      void refreshLiveData()
+    }, 10000)
+
+    const appStateSubscription = AppState.addEventListener('change', async (state) => {
+      if (state !== 'active') return
+      if (Platform.OS !== 'web') {
+        try {
+          const presentedNotifications = await Notifications.getPresentedNotificationsAsync()
+          for (const notification of presentedNotifications) {
+            const alertEvent = parseTicketAlertEvent(
+              notification.request.content.data,
+            )
+            if (alertEvent?.ticketId === ticket.ticketId) {
+              claimAlertOnce(
+                alertedEvents.current,
+                alertEvent.ticketId,
+                alertEvent.eventType,
+              )
+            }
+          }
+        } catch (error) {
+          console.warn('QueueMate could not check pending notifications.', error)
+        }
+      }
+      if (active) void refreshLiveData()
+    })
+
+    let socket
+    try {
+      socket = io(getApiOrigin())
+      socket.on('connect', refreshLiveData)
+      const handleTicketEvent = (event) => {
+        if (
+          event?.ticketNumber === ticket.ticketNumber
+          && event?.businessDate === ticket.businessDate
+        ) {
+          void refreshLiveData()
+        }
+      }
+      for (const eventName of [
+        'ticket:called',
+        'ticket:completed',
+        'ticket:skipped',
+      ]) {
+        socket.on(eventName, handleTicketEvent)
+      }
+      socket.on('notification:created', (event) => {
+        if (
+          event?.alertType === 'near_turn'
+          && event?.ticketNumber === ticket.ticketNumber
+        ) {
+          void refreshLiveData()
+        }
+      })
+      socket.on('window:updated', refreshLiveData)
+    } catch (error) {
+      console.warn('QueueMate live socket is unavailable; HTTP polling will continue.', error)
+    }
+
+    return () => {
+      active = false
+      stopQueueMonitoring({ interval, appStateSubscription, socket })
+    }
+  }, [
+    ticket?.ticketId,
+    ticket?.ticketAccessToken,
+    ticket?.status,
+    ticket,
+    flow.screen,
+    refreshKey,
+    triggerTicketAlert,
+  ])
 
   function acceptQueueEntryQr(value) {
     if (!parseQueueEntryQr(value)) return false
 
-    setConfirmedCode('Verified')
-    setAccessGranted(true)
+    ticketFlowGeneration.current += 1
+    dispatchFlow({ type: 'qr-accepted' })
     setManualEntry(false)
     setScanning(false)
-    setMessage('')
     return true
   }
 
   async function startScanning() {
-    setMessage('')
+    dispatchFlow({ type: 'message', message: '' })
     scanHandled.current = false
 
     if (permission?.granted) {
@@ -107,14 +559,18 @@ export default function App() {
       if (result.granted) {
         setScanning(true)
       } else {
-        setMessage(
-          result.canAskAgain
+        dispatchFlow({
+          type: 'message',
+          message: result.canAskAgain
             ? 'Camera permission is needed to scan. You can allow access or enter the code manually.'
             : 'Camera access is turned off for QueueMate. Enable it in your phone settings or enter the code manually.',
-        )
+        })
       }
     } catch {
-      setMessage('Camera access is unavailable right now. Please enter the flow identifier manually.')
+      dispatchFlow({
+        type: 'message',
+        message: 'Camera access is unavailable right now. Please enter the flow identifier manually.',
+      })
     }
   }
 
@@ -124,50 +580,117 @@ export default function App() {
 
     if (!acceptQueueEntryQr(data)) {
       setScanning(false)
-      setMessage('Invalid QR code. Scan the official QueueMate queue-entry code shown on the Public TV Display.')
+      dispatchFlow({
+        type: 'message',
+        message: 'Invalid QR code. Scan the official QueueMate queue-entry code shown on the Public TV Display.',
+      })
     }
   }
 
   function submitManualCode() {
     if (!manualCode.trim()) {
-      setMessage('Enter the official flow identifier shown beside the TV QR code.')
+      dispatchFlow({
+        type: 'message',
+        message: 'Enter the official flow identifier shown beside the TV QR code.',
+      })
       return
     }
 
     if (!acceptQueueEntryQr(manualCode)) {
-      setMessage('Invalid flow identifier. Check the official code shown on the Public TV Display.')
+      dispatchFlow({
+        type: 'message',
+        message: 'Invalid flow identifier. Check the official code shown on the Public TV Display.',
+      })
     }
   }
 
   function closeScanner() {
     setScanning(false)
-    setMessage('')
     scanHandled.current = false
   }
 
-  function createDemoTicket() {
-    if (!selectedTransaction) return
+  async function createTicket() {
+    if (!flow.selectedTransaction || issueRequestInFlight.current) return
 
-    if (!ticketCreated.current) {
-      ticketCreated.current = true
-      setDemoTicket({
-        number: '048',
-        transaction: selectedTransaction,
-        status: 'WAITING',
-        assignedWindowId: null,
+    ticketFlowGeneration.current += 1
+    const requestGeneration = ticketFlowGeneration.current
+    issueRequestInFlight.current = true
+    setNotificationMessage('')
+    dispatchFlow({ type: 'issue-started' })
+    try {
+      const issuedTicket = await apiRequest('/public/tickets', {
+        method: 'POST',
+        body: { transactionType: flow.selectedTransaction },
+      })
+      if (requestGeneration !== ticketFlowGeneration.current) return
+      if (
+        !issuedTicket?.ticketId
+        || !issuedTicket.ticketAccessToken
+        || !issuedTicket.ticketNumber
+        || !issuedTicket.transactionType
+        || !issuedTicket.status
+      ) {
+        throw new Error('The backend did not return a valid queue ticket.')
+      }
+
+      activeTicketId.current = issuedTicket.ticketId
+      lastTicketStatus.current.clear()
+      lastTicketStatus.current.set(issuedTicket.ticketId, issuedTicket.status)
+      alertedEvents.current.clear()
+      dispatchFlow({ type: 'ticket-issued', ticket: issuedTicket })
+      if (Platform.OS !== 'web') {
+        try {
+          await persistActiveTicket(issuedTicket)
+        } catch (error) {
+          console.warn('QueueMate could not securely store the active ticket.', error)
+          if (activeTicketId.current === issuedTicket.ticketId) {
+            setNotificationMessage(
+              'The ticket cannot be restored by tapping an alert. Keep QueueMate open to monitor it.',
+            )
+          }
+        }
+        void registerPushTokenForTicket(issuedTicket)
+      }
+    } catch (error) {
+      if (requestGeneration !== ticketFlowGeneration.current) return
+      dispatchFlow({
+        type: 'issue-failed',
+        message: error instanceof Error
+          ? error.message
+          : 'Unable to issue a ticket. Please try again.',
+      })
+    } finally {
+      issueRequestInFlight.current = false
+    }
+  }
+
+  function finishTicket() {
+    ticketFlowGeneration.current += 1
+    const oldTicketId = activeTicketId.current
+    activeTicketId.current = null
+    issueRequestInFlight.current = false
+    lastTicketStatus.current.clear()
+    alertedEvents.current.clear()
+    setNotificationMessage('')
+    nearTurnPlayer.pause()
+    calledPlayer.pause()
+    if (Platform.OS !== 'web') Vibration.cancel()
+    if (oldTicketId && Platform.OS !== 'web') {
+      void clearStoredTicket(oldTicketId).catch((error) => {
+        console.warn('QueueMate stored ticket could not be cleared.', error)
       })
     }
-
-    setTransactionSelection(false)
-    setTicketScreen(true)
-    setMessage('')
+    if (Platform.OS !== 'web') {
+      void Notifications.dismissAllNotificationsAsync().catch((error) => {
+        console.warn('QueueMate notifications could not be dismissed.', error)
+      })
+    }
+    setScanning(false)
+    setManualEntry(false)
+    setManualCode('')
+    scanHandled.current = false
+    dispatchFlow({ type: 'done' })
   }
-
-  function refreshDemoQueue() {
-    setDemoWindows(DEMO_WINDOWS.map((window) => ({ ...window })))
-    setQueueRefreshed(true)
-  }
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" backgroundColor={colors.blue} />
@@ -181,14 +704,98 @@ export default function App() {
           </Text>
         </View>
 
-        {monitoringScreen ? (
+        {ticket && terminalTicket ? (
+          <View style={styles.content}>
+            <View
+              style={
+                terminalTicket.status === 'completed'
+                  ? styles.successIcon
+                  : styles.skippedIcon
+              }
+            >
+              <Text
+                style={
+                  terminalTicket.status === 'completed'
+                    ? styles.successIconText
+                    : styles.skippedIconText
+                }
+              >
+                {terminalTicket.status === 'completed' ? '✓' : '!'}
+              </Text>
+            </View>
+            <View style={styles.intro}>
+              <Text style={styles.eyebrow}>
+                {terminalTicket.status === 'completed' ? 'QUEUE COMPLETE' : 'QUEUE UPDATE'}
+              </Text>
+              <Text style={styles.title}>{terminalTicket.title}</Text>
+              <Text style={styles.description}>{terminalTicket.description}</Text>
+            </View>
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={finishTicket}
+              style={[styles.button, styles.primaryButton, styles.doneButton]}
+            >
+              <Text style={styles.primaryButtonText}>{terminalTicket.actionLabel}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : ticket && ticketView === 'expired' ? (
+          <View style={styles.content}>
+            <View style={styles.skippedIcon}>
+              <Text style={styles.skippedIconText}>!</Text>
+            </View>
+            <View style={styles.intro}>
+              <Text style={styles.eyebrow}>QUEUE UPDATE</Text>
+              <Text style={styles.title}>This ticket has expired.</Text>
+              <Text style={styles.description}>
+                Ticket {ticket.ticketNumber} is no longer active. Please start a new queue entry.
+              </Text>
+            </View>
+            <TouchableOpacity
+              accessibilityRole="button"
+              onPress={finishTicket}
+              style={[styles.button, styles.primaryButton, styles.doneButton]}
+            >
+              <Text style={styles.primaryButtonText}>DONE</Text>
+            </TouchableOpacity>
+          </View>
+        ) : ticket && ticketView === 'called' ? (
+          <View style={styles.content}>
+            <View style={styles.calledIcon}>
+              <Text style={styles.calledIconText}>!</Text>
+            </View>
+            <View style={styles.intro}>
+              <Text style={styles.eyebrow}>NOW SERVING</Text>
+              <Text style={styles.title}>Your number is being called!</Text>
+              <Text style={styles.description}>
+                Ticket {ticket.ticketNumber}
+              </Text>
+            </View>
+            <View style={styles.calledWindowCard}>
+              <Text style={styles.calledWindowLabel}>PROCEED TO</Text>
+              <Text style={styles.calledWindowNumber}>
+                WINDOW {ticket.windowNumber ?? '—'}
+              </Text>
+            </View>
+            <Text style={styles.successNote}>
+              Please proceed to your assigned cashier window now.
+            </Text>
+            {flow.ticketError ? (
+              <Text accessibilityRole="alert" style={styles.message}>
+                Unable to confirm the latest ticket status: {flow.ticketError}
+              </Text>
+            ) : null}
+            {notificationMessage ? (
+              <Text style={styles.permissionNotice}>{notificationMessage}</Text>
+            ) : null}
+          </View>
+        ) : flow.screen === 'monitoring' ? (
           <ScrollView
             contentContainerStyle={styles.monitorContent}
             style={styles.monitorScroll}
           >
             <TouchableOpacity
               accessibilityRole="button"
-              onPress={() => setMonitoringScreen(false)}
+              onPress={() => dispatchFlow({ type: 'open-ticket' })}
               style={styles.backButton}
             >
               <Text style={styles.backButtonText}>‹  Back to Ticket</Text>
@@ -197,143 +804,166 @@ export default function App() {
               <Text style={styles.eyebrow}>QUEUE MONITORING</Text>
               <Text style={styles.title}>Your queue</Text>
               <Text style={styles.description}>
-                Check your demo ticket and the sample serving numbers below.
+                Live ticket status and serving numbers refresh automatically.
               </Text>
             </View>
-            {nearTurnAlertEvent ? (
+            {nearTurnAlert ? (
               <View accessibilityRole="alert" style={styles.nearTurnAlert}>
                 <Text style={styles.nearTurnAlertTitle}>Your turn is approaching!</Text>
                 <Text style={styles.nearTurnAlertText}>
-                  Please return to the Business Office. You are five numbers from
-                  being called at Window {nearTurnAlertEvent.windowId}.
+                  You are {ticket.queuePosition} in the live waiting queue.
                 </Text>
-                <Text style={styles.nearTurnDemoLabel}>DEMO ALERT</Text>
               </View>
             ) : null}
-            {demoTicket ? (
+            {ticket ? (
               <View style={styles.monitorTicketCard}>
                 <View style={styles.monitorTicketNumberWrap}>
                   <Text style={styles.monitorTicketLabel}>YOUR NUMBER</Text>
-                  <Text style={styles.monitorTicketNumber}>{demoTicket.number}</Text>
+                  <Text style={styles.monitorTicketNumber}>{ticket.ticketNumber}</Text>
                 </View>
                 <View style={styles.monitorTicketDetails}>
                   <Text style={styles.monitorTransaction}>
-                    {transactionNames[demoTicket.transaction]}
+                    {ticket.transactionType}
                   </Text>
-                  <Text style={styles.monitorStatus}>{demoTicket.status}</Text>
+                  <Text style={styles.monitorStatus}>{ticket.status?.toUpperCase()}</Text>
                 </View>
               </View>
             ) : null}
-            {demoTicket && !assignedWindow ? (
+            {ticket?.windowNumber ? (
               <Text style={styles.assignmentNotice}>
-                Near-turn alert is demo-only. This ticket has no assigned window,
-                so it cannot be compared to an unrelated serving number.
+                Please proceed to Window {ticket.windowNumber} when called.
+              </Text>
+            ) : null}
+            {flow.ticketError ? (
+              <Text accessibilityRole="alert" style={styles.message}>
+                Ticket status could not be refreshed: {flow.ticketError}
+              </Text>
+            ) : null}
+            {ticket?.queuePosition ? (
+              <Text style={styles.assignmentNotice}>
+                Live waiting position: {ticket.queuePosition}
               </Text>
             ) : null}
             <View style={styles.windowSectionHeading}>
               <Text style={styles.windowSectionTitle}>Cashier Windows</Text>
-              <Text style={styles.demoBadge}>DEMO DATA</Text>
             </View>
-            <View style={styles.windowList}>
-              {demoWindows.map((window) => (
-                <View key={window.id} style={styles.windowCard}>
-                  <View style={styles.windowNumberBadge}>
-                    <Text style={styles.windowNumberBadgeText}>{window.id}</Text>
-                  </View>
-                  <View style={styles.windowInfo}>
-                    <Text style={styles.windowName}>Window {window.id}</Text>
-                    <Text style={styles.windowServing}>
-                      {window.servingNumber
-                        ? `Serving #${window.servingNumber}`
-                        : 'No ticket being served'}
-                    </Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.windowStatusBadge,
-                      window.status === 'AVAILABLE' && styles.windowAvailableBadge,
-                    ]}
-                  >
-                    <Text
+            {flow.queueError ? (
+              <Text accessibilityRole="alert" style={styles.message}>
+                Live queue could not be refreshed: {flow.queueError}
+              </Text>
+            ) : null}
+            {queue ? (
+              <View style={styles.windowList}>
+                {queue.windows.map((window) => (
+                  <View key={window.windowNumber} style={styles.windowCard}>
+                    <View style={styles.windowNumberBadge}>
+                      <Text style={styles.windowNumberBadgeText}>{window.windowNumber}</Text>
+                    </View>
+                    <View style={styles.windowInfo}>
+                      <Text style={styles.windowName}>Window {window.windowNumber}</Text>
+                      <Text style={styles.windowServing}>
+                        {window.currentTicketNumber
+                          ? `Serving #${window.currentTicketNumber}`
+                          : 'No ticket being served'}
+                      </Text>
+                    </View>
+                    <View
                       style={[
-                        styles.windowStatusText,
-                        window.status === 'AVAILABLE' && styles.windowAvailableText,
+                        styles.windowStatusBadge,
+                        window.status === 'available' && styles.windowAvailableBadge,
                       ]}
                     >
-                      {window.status}
-                    </Text>
+                      <Text
+                        style={[
+                          styles.windowStatusText,
+                          window.status === 'available' && styles.windowAvailableText,
+                        ]}
+                      >
+                        {window.currentTicketNumber
+                          ? 'SERVING'
+                          : window.status.toUpperCase()}
+                      </Text>
+                    </View>
                   </View>
-                </View>
-              ))}
-            </View>
-            <Text style={styles.demoDisclaimer}>
-              These queue numbers are sample data for demonstration only. They are
-              not live and are not connected to the school queue system.
-            </Text>
+                ))}
+              </View>
+            ) : !flow.queueError ? (
+              <Text style={styles.windowServing}>Loading live queue...</Text>
+            ) : null}
             <TouchableOpacity
               accessibilityRole="button"
-              onPress={refreshDemoQueue}
+              onPress={() => setRefreshKey((key) => key + 1)}
               style={[styles.button, styles.primaryButton, styles.refreshButton]}
             >
-              <Text style={styles.primaryButtonText}>Refresh Demo Queue</Text>
+              <Text style={styles.primaryButtonText}>Refresh Queue</Text>
             </TouchableOpacity>
-            {queueRefreshed ? (
-              <Text style={styles.refreshFeedback}>Demo queue data reloaded.</Text>
-            ) : null}
           </ScrollView>
-        ) : ticketScreen && demoTicket ? (
+        ) : flow.screen === 'ticket' && ticket ? (
           <View style={styles.content}>
             <TouchableOpacity
               accessibilityRole="button"
-              onPress={() => {
-                setSelectedTransaction(demoTicket.transaction)
-                setTicketScreen(false)
-                setTransactionSelection(true)
-              }}
+              onPress={() => dispatchFlow({ type: 'open-monitoring' })}
               style={styles.backButton}
             >
-              <Text style={styles.backButtonText}>‹  Back</Text>
+              <Text style={styles.backButtonText}>‹  Monitor Queue</Text>
             </TouchableOpacity>
             <View style={styles.intro}>
               <Text style={styles.eyebrow}>QUEUE TICKET</Text>
-              <Text style={styles.title}>Your demo ticket</Text>
+              <Text style={styles.title}>Your queue ticket</Text>
               <Text style={styles.description}>
-                This is a local demonstration ticket, not an actual queue issuance.
+                This ticket was issued by the QueueMate queue system.
               </Text>
             </View>
             <View style={styles.ticketCard}>
-              <Text style={styles.demoBadge}>DEMO</Text>
               <Text style={styles.ticketNumberLabel}>QUEUE NUMBER</Text>
-              <Text style={styles.ticketNumber}>{demoTicket.number}</Text>
+              <Text style={styles.ticketNumber}>{ticket.ticketNumber}</Text>
               <View style={styles.ticketDivider} />
               <Text style={styles.ticketDetailLabel}>TRANSACTION</Text>
               <Text style={styles.ticketDetail}>
-                {transactionNames[demoTicket.transaction]}
+                {ticket.transactionType}
               </Text>
               <View style={styles.ticketStatus}>
                 <View style={styles.ticketStatusDot} />
-                <Text style={styles.ticketStatusText}>{demoTicket.status}</Text>
+                <Text style={styles.ticketStatusText}>{ticket.status?.toUpperCase()}</Text>
               </View>
             </View>
+            {nearTurnAlert ? (
+              <View accessibilityRole="alert" style={styles.nearTurnAlert}>
+                <Text style={styles.nearTurnAlertTitle}>Your turn is approaching!</Text>
+                <Text style={styles.nearTurnAlertText}>
+                  You are {ticket.queuePosition} in the live waiting queue.
+                </Text>
+              </View>
+            ) : null}
+            {ticket?.queuePosition ? (
+              <Text style={styles.assignmentNotice}>
+                Live waiting position: {ticket.queuePosition}
+              </Text>
+            ) : null}
+            {flow.ticketError ? (
+              <Text accessibilityRole="alert" style={styles.message}>
+                Ticket status could not be refreshed: {flow.ticketError}
+              </Text>
+            ) : null}
+            {notificationMessage ? (
+              <Text style={styles.permissionNotice}>{notificationMessage}</Text>
+            ) : null}
             <Text style={styles.successNote}>
               Please monitor the queue while you wait for your number to be called.
             </Text>
             <TouchableOpacity
               accessibilityRole="button"
-              onPress={() => setMonitoringScreen(true)}
+              onPress={() => dispatchFlow({ type: 'open-monitoring' })}
               style={[styles.button, styles.primaryButton, styles.continueButton]}
             >
               <Text style={styles.primaryButtonText}>Monitor Queue</Text>
             </TouchableOpacity>
           </View>
-        ) : transactionSelection ? (
+        ) : flow.screen === 'selection' ? (
           <View style={styles.content}>
             <TouchableOpacity
               accessibilityRole="button"
-              onPress={() => {
-                setTransactionSelection(false)
-                setMessage('')
-              }}
+              onPress={() => dispatchFlow({ type: 'open-verified' })}
               style={styles.backButton}
             >
               <Text style={styles.backButtonText}>‹  Back</Text>
@@ -347,10 +977,11 @@ export default function App() {
             </View>
             <View style={styles.transactionOptions}>
               {[
-                { id: 'soa', title: 'Statement of Account (SOA)' },
-                { id: 'payment', title: 'Payment' },
+                { id: 'SOA', title: 'Statement of Account (SOA)' },
+                { id: 'Payment', title: 'Payment' },
+                { id: 'Other Transactions', title: 'Other' },
               ].map((transaction) => {
-                const isSelected = selectedTransaction === transaction.id
+                const isSelected = flow.selectedTransaction === transaction.id
 
                 return (
                   <TouchableOpacity
@@ -358,8 +989,10 @@ export default function App() {
                     accessibilityState={{ selected: isSelected }}
                     key={transaction.id}
                     onPress={() => {
-                      setSelectedTransaction(transaction.id)
-                      setMessage('')
+                      dispatchFlow({
+                        type: 'select-transaction',
+                        transaction: transaction.id,
+                      })
                     }}
                     style={[
                       styles.transactionOption,
@@ -388,52 +1021,56 @@ export default function App() {
             </View>
             <TouchableOpacity
               accessibilityRole="button"
-              accessibilityState={{ disabled: !selectedTransaction }}
-              disabled={!selectedTransaction}
-              onPress={createDemoTicket}
+              accessibilityState={{
+                disabled: !flow.selectedTransaction || flow.isIssuingTicket,
+              }}
+              disabled={!flow.selectedTransaction || flow.isIssuingTicket}
+              onPress={createTicket}
               style={[
                 styles.button,
                 styles.primaryButton,
                 styles.continueButton,
-                !selectedTransaction && styles.disabledButton,
+                (!flow.selectedTransaction || flow.isIssuingTicket) && styles.disabledButton,
               ]}
             >
-              <Text style={styles.primaryButtonText}>Continue</Text>
+              <Text style={styles.primaryButtonText}>
+                {flow.isIssuingTicket ? 'Issuing Ticket...' : 'Continue'}
+              </Text>
             </TouchableOpacity>
-            {message ? <Text style={styles.message}>{message}</Text> : null}
+            {flow.message ? <Text style={styles.message}>{flow.message}</Text> : null}
           </View>
-        ) : accessGranted ? (
+        ) : flow.screen === 'verified' ? (
           <View style={styles.content}>
             <View style={styles.successIcon}>
               <Text style={styles.successIconText}>✓</Text>
             </View>
             <View style={styles.intro}>
-              <Text style={styles.eyebrow}>ACCESS CONFIRMED</Text>
-              <Text style={styles.title}>You're connected</Text>
+              <Text style={styles.eyebrow}>QUEUE ENTRY VERIFIED</Text>
+              <Text style={styles.title}>Queue entry ready</Text>
               <Text style={styles.description}>
-                The QueueMate queue-entry QR was verified successfully.
+                The QueueMate queue-entry QR was verified. Select a service to request a live ticket.
               </Text>
             </View>
             <View style={styles.confirmedCodeCard}>
               <Text style={styles.confirmedCodeLabel}>QUEUE ENTRY</Text>
-              <Text style={styles.confirmedCode}>{confirmedCode}</Text>
+              <Text style={styles.confirmedCode}>{flow.confirmedCode}</Text>
             </View>
             <Text style={styles.successNote}>
               Choose a transaction to continue.
             </Text>
             <TouchableOpacity
               accessibilityRole="button"
-              onPress={() => setTransactionSelection(true)}
+              onPress={() => dispatchFlow({ type: 'open-selection' })}
               style={[styles.button, styles.primaryButton, styles.continueButton]}
             >
-              <Text style={styles.primaryButtonText}>Continue</Text>
+              <Text style={styles.primaryButtonText}>
+                {flow.isIssuingTicket ? 'Issuing Ticket...' : 'Continue'}
+              </Text>
             </TouchableOpacity>
             <TouchableOpacity
               accessibilityRole="button"
               onPress={() => {
-                setAccessGranted(false)
-                setConfirmedCode('')
-                setSelectedTransaction('')
+                dispatchFlow({ type: 'return-to-welcome' })
                 setManualCode('')
               }}
               style={styles.secondaryAction}
@@ -483,7 +1120,7 @@ export default function App() {
               accessibilityRole="button"
               onPress={() => {
                 setManualEntry(false)
-                setMessage('')
+                dispatchFlow({ type: 'message', message: '' })
               }}
               style={styles.backButton}
             >
@@ -502,7 +1139,7 @@ export default function App() {
               autoCorrect={false}
               onChangeText={(value) => {
                 setManualCode(value)
-                setMessage('')
+                dispatchFlow({ type: 'message', message: '' })
               }}
               onSubmitEditing={submitManualCode}
               maxLength={QUEUE_ENTRY_QR_PAYLOAD.length}
@@ -519,7 +1156,7 @@ export default function App() {
             >
               <Text style={styles.primaryButtonText}>Continue</Text>
             </TouchableOpacity>
-            {message ? <Text style={styles.message}>{message}</Text> : null}
+            {flow.message ? <Text style={styles.message}>{flow.message}</Text> : null}
           </View>
         ) : (
           <View style={styles.content}>
@@ -552,7 +1189,7 @@ export default function App() {
             <TouchableOpacity
               accessibilityRole="button"
               onPress={() => {
-                setMessage('')
+                dispatchFlow({ type: 'message', message: '' })
                 setManualEntry(true)
               }}
               style={[styles.button, styles.secondaryButton]}
@@ -560,7 +1197,7 @@ export default function App() {
               <Text style={styles.secondaryButtonText}>Enter Flow Identifier</Text>
             </TouchableOpacity>
 
-            {message ? <Text style={styles.message}>{message}</Text> : null}
+            {flow.message ? <Text style={styles.message}>{flow.message}</Text> : null}
             <Text style={styles.privacyNote}>
               Your camera is only requested when you choose to scan.
             </Text>
@@ -648,14 +1285,6 @@ const styles = StyleSheet.create({
     color: colors.blue,
     fontSize: 13,
     lineHeight: 19,
-  },
-  nearTurnDemoLabel: {
-    alignSelf: 'flex-start',
-    marginTop: 9,
-    color: colors.textMuted,
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.8,
   },
   assignmentNotice: {
     marginTop: 11,
@@ -779,21 +1408,8 @@ const styles = StyleSheet.create({
   windowAvailableText: {
     color: '#187A45',
   },
-  demoDisclaimer: {
-    marginTop: 16,
-    color: colors.textMuted,
-    fontSize: 12,
-    lineHeight: 18,
-    textAlign: 'center',
-  },
   refreshButton: {
     marginTop: 15,
-  },
-  refreshFeedback: {
-    marginTop: 9,
-    color: colors.textMuted,
-    fontSize: 12,
-    textAlign: 'center',
   },
   welcomeIcon: {
     width: 70,
@@ -820,6 +1436,60 @@ const styles = StyleSheet.create({
     color: colors.blue,
     fontSize: 38,
     fontWeight: '800',
+  },
+  calledIcon: {
+    width: 70,
+    height: 70,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 35,
+    backgroundColor: colors.yellow,
+  },
+  calledIconText: {
+    color: colors.blue,
+    fontSize: 38,
+    fontWeight: '900',
+  },
+  skippedIcon: {
+    width: 70,
+    height: 70,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 35,
+    backgroundColor: '#FFE5E5',
+  },
+  skippedIconText: {
+    color: '#A12626',
+    fontSize: 38,
+    fontWeight: '900',
+  },
+  calledWindowCard: {
+    alignItems: 'center',
+    paddingVertical: 18,
+    borderRadius: 14,
+    backgroundColor: colors.blue,
+  },
+  calledWindowLabel: {
+    color: colors.yellow,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  calledWindowNumber: {
+    marginTop: 6,
+    color: colors.white,
+    fontSize: 27,
+    fontWeight: '900',
+  },
+  doneButton: {
+    marginTop: 26,
+  },
+  permissionNotice: {
+    marginTop: 12,
+    color: colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: 'center',
   },
   confirmedCodeCard: {
     alignItems: 'center',
@@ -850,17 +1520,6 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderRadius: 16,
     backgroundColor: colors.paleBlue,
-  },
-  demoBadge: {
-    overflow: 'hidden',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 14,
-    backgroundColor: colors.yellow,
-    color: colors.blue,
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1,
   },
   ticketNumberLabel: {
     marginTop: 19,

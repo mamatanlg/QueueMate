@@ -15,6 +15,7 @@ class QueueHttpDatabase {
     tickets = [],
     availabilityStatus = 'available',
     assignedWindowId = 'window-2',
+    nearTurnOffset = 5,
   } = {}) {
     this.staff = {
       id: randomUUID(),
@@ -36,6 +37,7 @@ class QueueHttpDatabase {
     }
     this.sessions = new Map()
     this.ticketCounter = 0
+    this.nearTurnOffset = nearTurnOffset
     this.tickets = tickets.map((ticket) => ({ ...ticket }))
     this.notifications = []
     this.calls = []
@@ -129,6 +131,14 @@ class QueueHttpDatabase {
             skipped_at: ticket.skipped_at ?? null,
             transaction_type: ticket.transaction_type,
             window_number: ticket.window_id ? this.window.window_number : null,
+            queue_position: ticket.status === 'waiting'
+              ? this.tickets.filter((waitingTicket) => (
+                waitingTicket.business_date === ticket.business_date
+                && waitingTicket.status === 'waiting'
+                && waitingTicket.queue_number <= ticket.queue_number
+              )).length
+              : null,
+            near_turn_offset: 5,
           }]
           : [],
       }
@@ -210,6 +220,26 @@ class QueueHttpDatabase {
       }
     }
     if (sql.includes('INSERT INTO queue_history')) return { rows: [] }
+    if (sql.includes('WITH settings AS') && sql.includes('waiting_positions')) {
+      const waiting = this.tickets
+        .filter((ticket) => (
+          ticket.business_date === values[0] && ticket.status === 'waiting'
+        ))
+        .sort((left, right) => left.queue_number - right.queue_number)
+        .slice(0, this.nearTurnOffset)
+      return {
+        rows: waiting.map(({ id, queue_number }) => ({ id, queue_number })),
+      }
+    }
+    if (sql.includes("VALUES ($1, 'near_turn')")) {
+      const alreadyExists = this.notifications.some((notification) => (
+        notification.ticket_id === values[0]
+        && notification.alert_type === 'near_turn'
+      ))
+      if (alreadyExists) return { rows: [] }
+      this.notifications.push({ ticket_id: values[0], alert_type: 'near_turn' })
+      return { rows: [{ id: randomUUID() }] }
+    }
 
     if (sql.includes('FROM cashier_windows') && sql.includes('FOR UPDATE')) {
       const ids = Array.isArray(values[0]) ? values[0] : [values[0]]
@@ -382,7 +412,7 @@ function makeTicket(number, {
   }
 }
 
-test('public HTTP ticket issuance numbers tickets sequentially and tracking requires its access token', async (t) => {
+test('public HTTP ticket issuance numbers tickets, creates near-turn events, and tracks with its access token', async (t) => {
   const database = new QueueHttpDatabase()
   const { origin, events } = await createHttpFixture(t, database)
 
@@ -421,6 +451,8 @@ test('public HTTP ticket issuance numbers tickets sequentially and tracking requ
     calledAt: null,
     completedAt: null,
     skippedAt: null,
+    queuePosition: 1,
+    nearTurnOffset: 5,
   })
 
   const wrongToken = await requestJson(
@@ -430,11 +462,35 @@ test('public HTTP ticket issuance numbers tickets sequentially and tracking requ
   )
   assert.equal(wrongToken.status, 404)
 
-  assert.deepEqual(events.map(({ event }) => event), ['ticket:issued', 'ticket:issued'])
+  assert.deepEqual(events.map(({ event }) => event), [
+    'ticket:issued',
+    'notification:created',
+    'ticket:issued',
+    'notification:created',
+  ])
   assert.equal('ticketAccessToken' in events[0].payload, false)
 })
 
-test('cashier HTTP queue operations call the oldest ticket, alert N-5, complete and skip, and emit events', async (t) => {
+test('push-token registration rejects malformed Expo tokens before database access', async (t) => {
+  const database = new QueueHttpDatabase()
+  const { origin } = await createHttpFixture(t, database)
+  const initialCallCount = database.calls.length
+
+  const response = await requestJson(
+    origin,
+    `/api/v1/public/tickets/${randomUUID()}/push-token`,
+    {
+      method: 'POST',
+      ticketToken: 'a'.repeat(43),
+      body: { expoPushToken: 'not-an-expo-token' },
+    },
+  )
+
+  assert.equal(response.status, 400)
+  assert.equal(database.calls.length, initialCallCount)
+})
+
+test('cashier HTTP queue operations call the oldest ticket, alert by live position, complete and skip', async (t) => {
   const database = new QueueHttpDatabase({
     tickets: [
       makeTicket(6),
@@ -463,8 +519,9 @@ test('cashier HTTP queue operations call the oldest ticket, alert N-5, complete 
   assert.deepEqual(database.notifications.map(({ alert_type }) => alert_type), [
     'called',
     'near_turn',
+    'near_turn',
   ])
-  assert.deepEqual(events.slice(0, 3), [
+  assert.deepEqual(events.slice(0, 4), [
     {
       event: 'ticket:called',
       payload: {
@@ -477,6 +534,10 @@ test('cashier HTTP queue operations call the oldest ticket, alert N-5, complete 
     {
       event: 'notification:created',
       payload: { ticketNumber: '004', alertType: 'called' },
+    },
+    {
+      event: 'notification:created',
+      payload: { ticketNumber: '006', alertType: 'near_turn' },
     },
     {
       event: 'notification:created',
